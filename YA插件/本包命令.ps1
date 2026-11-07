@@ -26,13 +26,21 @@ try {
       }
     } catch { throw '本包连接状态不可读；先重新准备连接，不沿用旧状态。' }
   }
+  $flowFile=Join-Path $pkg '经验库\流程.json'
+  $taskBefore=$null
+  if(Test-Path -LiteralPath $flowFile){$taskBefore=(Get-Content -LiteralPath $flowFile -Raw -Encoding UTF8|ConvertFrom-Json).current}
   $started = [DateTime]::UtcNow
   $lines = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '安装卸载\运行时\ya.ps1') @Rest)
   $result = $LASTEXITCODE
   $lines | Write-Output
   if (Get-Command Add-YaActualEvent -ErrorAction SilentlyContinue) {
     $flow = Get-Content -LiteralPath (Join-Path $pkg '经验库\流程.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    Add-YaActualEvent $pkg 'runtime' ([ordered]@{command=@($Rest); task=$flow.current; exit_code=$result; elapsed_ms=([DateTime]::UtcNow-$started).TotalMilliseconds; output=$lines; verification='caller_declared'})
+    $eventTask=$flow.current
+    if(-not $eventTask -and $taskBefore){
+      $archived=@($flow.history|Where-Object {$_.id -ceq $taskBefore.id})
+      $eventTask=if($archived.Count){$archived[-1]}else{$taskBefore}
+    }
+    Add-YaActualEvent $pkg 'runtime' ([ordered]@{command=@($Rest); task=$eventTask; exit_code=$result; elapsed_ms=([DateTime]::UtcNow-$started).TotalMilliseconds; output=$lines; verification='caller_declared'})
   }
 } finally {
   foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $old[$n], 'Process') }

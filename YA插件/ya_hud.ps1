@@ -329,7 +329,7 @@ public class YaCard : Window {
     Mini(expBody, "\u65b0\u6536", out vLib, out uLib, "\u6761"); tLib = lastRow;
     foreach (var row in new FrameworkElement[] { tAll, tUse, tLib, tTokn }) {
       row.Cursor = Cursors.Hand;
-      row.MouseLeftButtonUp += (s, e) => { e.Handled = true; ShowActualDetails(); };
+      row.MouseLeftButtonUp += (s, e) => { e.Handled = true; if(row==tTokn) ShowUsageDetails(); else ShowActualDetails(); };
     }
     var rateBody = MkCard(detail, "\u4EFB\u52A1\u5B8C\u6210\u5EA6", out vRate, out uRate, "%"); tRate = lastRow;
     dSub = new TextBlock { Text = "", Foreground = new SolidColorBrush(Sub), Margin = new Thickness(0, 3, 0, 0), TextWrapping = TextWrapping.Wrap };
@@ -360,12 +360,10 @@ public class YaCard : Window {
 
     var miTot = new MenuItem { Header = "\u603B\u8BA1\u2026" }; miTot.Click += (s, e) => Safe(ShowTotals);
 
-    var miNew = new MenuItem { Header = "\u91CD\u65B0\u8BA1\u4E00\u6B21" }; miNew.Click += (s, e) => Safe(() => { ForceRefresh(); NewRun(); Show4(); if (totWin != null) FillTotals(); });
+    var miNew = new MenuItem { Header = "刷新" }; miNew.Click += (s, e) => Safe(() => { ForceRefresh(); Show4(); if (totWin != null) FillTotals(); });
 
-    var miReset = new MenuItem { Header = "\u5168\u90E8\u91CD\u7F6E\uFF08TOKEN/\u6D88\u8017/\u7528\u65F6/\u7D2F\u8BA1\u6E05\u96F6\uFF0C\u7ECF\u9A8C\u5E93\u4FDD\u7559\uFF09" };
-    miReset.Click += (s, e) => Safe(() => {
-      var ok = MessageBox.Show(this, "\u5168\u90E8\u91CD\u7F6E\uFF1A\n\u6E05\u96F6 \u2014 \u672C\u6B21 TOKEN\u3001\u6D88\u8017\u3001\u7528\u65F6\u3001\u7ECF\u9A8C\u8C03\u7528\u3001\u65B0\u6536\uFF1B\u6574\u4E2A\u8FDE\u63A5\u4F1A\u8BDD\u7EDF\u8BA1\uFF1B\u672C\u673A\u7D2F\u8BA1\uFF08\u53F3\u952E \u2192 \u603B\u8BA1\uFF09\n\u4FDD\u7559 \u2014 \u7ECF\u9A8C\u5E93\u91CC\u7684\u5168\u90E8\u7ECF\u9A8C\u548C\u6761\u6570\uFF08\u4E0D\u5220\u4EFB\u4F55\u7ECF\u9A8C\uFF09\n\n\u786E\u5B9A\u91CD\u7F6E\uFF1F", "YA \u5168\u90E8\u91CD\u7F6E", MessageBoxButton.YesNo, MessageBoxImage.Question);
-      if (ok == MessageBoxResult.Yes) ResetAll(); });
+    var miReset = new MenuItem { Header = "重置统计…" };
+    miReset.Click += (s, e) => Safe(ShowReset);
     miTop = new MenuItem { Header = "\u7F6E\u9876", IsCheckable = true };
 
     miTop.Click += (s, e) => { Topmost = miTop.IsChecked; SavePos(); };
@@ -1365,6 +1363,142 @@ public class YaCard : Window {
 
   // consumption tile: always a real amount. Order: this run (real split) -> whole session (real) -> this run (estimate) -> session estimate -> totals on this computer
 
+  Dictionary<string,object> CurrentTask(Dictionary<string,object> flow) {
+    if(flow==null) return null;
+    var current=Has(flow,"current") ? flow["current"] as Dictionary<string,object> : null;
+    if(current!=null) return current;
+    var history=Has(flow,"history") ? JArr(flow["history"]) : null;
+    return history!=null && history.Length>0 ? history[history.Length-1] as Dictionary<string,object> : null;
+  }
+  List<Dictionary<string,object>> IndexEntries(string dir) {
+    var result=new List<Dictionary<string,object>>();
+    var index=ReadJson(System.IO.Path.Combine(dir,"索引.json"));
+    var entries=Has(index,"entries") ? JArr(index["entries"]) : null;
+    var ids=new HashSet<string>();
+    if(entries!=null) foreach(var item in entries) { var row=item as Dictionary<string,object>; if(row!=null && ids.Add(Str(row,"id"))) result.Add(row); }
+    return result;
+  }
+  string TaskSlot() {
+    var task=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));
+    string slot=Str(task,"slot");
+    return System.Text.RegularExpressions.Regex.IsMatch(slot,"^[a-z][a-z0-9_-]{0,31}$") && slot!="generic" && slot!="all" ? slot : "";
+  }
+  int CommonCount() { return IndexEntries(System.IO.Path.Combine(libDir,"槽","generic")).Count+IndexEntries(System.IO.Path.Combine(libDir,"通用技能库")).Count; }
+  int SoftwareCount(string slot) { return slot=="" ? 0 : IndexEntries(System.IO.Path.Combine(libDir,"槽",slot)).Count; }
+  List<Dictionary<string,object>> ActualEvents() {
+    var result=new List<Dictionary<string,object>>();
+    string dir=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(ioDir),"events");
+    if(Directory.Exists(dir)) foreach(string file in Directory.GetFiles(dir,"*.json")) { var e=ReadJson(file); if(e!=null) result.Add(e); }
+    return result;
+  }
+  bool VerifiedEvent(Dictionary<string,object> e) {
+    var d=Has(e,"data") ? e["data"] as Dictionary<string,object> : null;
+    return Str(e,"kind")=="experience_verified" && (Str(d,"verification")=="independent_adapter_readback" || Str(d,"verification")=="independent_software_readback");
+  }
+  bool Retrieval(Dictionary<string,object> d) {
+    var command=Has(d,"command") ? JArr(d["command"]) : null;
+    return command!=null && command.Length>0 && Array.IndexOf(new[]{"exp_search","exp_recall","exp_get","skill_search","skill_get"},Convert.ToString(command[0],IC))>=0 && Num(d,"exit_code")==0;
+  }
+  bool AfterDisplayReset(Dictionary<string,object> e) {
+    var reset=ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"));
+    return reset==null || string.CompareOrdinal(Str(e,"time"),Str(reset,"time"))>0;
+  }
+  Dictionary<string,object> UsageSessions() {
+    var sessions=new Dictionary<string,object>();
+    foreach(var e in ActualEvents()) {
+      var d=Has(e,"data") ? e["data"] as Dictionary<string,object> : null;
+      if(Str(e,"kind")!="usage_snapshot" || Str(d,"source_kind")!="runtime_measured" || Str(d,"session")=="") continue;
+      string session=Str(d,"session"); double old=sessions.ContainsKey(session) ? Convert.ToDouble(sessions[session],IC) : 0;
+      sessions[session]=Math.Max(old,Num(d,"total_tokens"));
+    }
+    var current=ReadJson(System.IO.Path.Combine(ioDir,"actual_usage.json"));
+    if(Str(current,"source_kind")=="runtime_measured" && Str(current,"session")!="") {
+      string session=Str(current,"session"); double old=sessions.ContainsKey(session) ? Convert.ToDouble(sessions[session],IC) : 0;
+      sessions[session]=Math.Max(old,Num(current,"total_tokens"));
+    }
+    return sessions;
+  }
+  void ResetActualDisplay() {
+    var reset=new Dictionary<string,object>();reset["time"]=DateTime.UtcNow.ToString("o");reset["sessions"]=UsageSessions();
+    var usage=ReadJson(System.IO.Path.Combine(ioDir,"actual_usage.json"));
+    reset["session"]=Str(usage,"session");reset["task"]=Str(usage,"task");reset["task_tokens"]=Num(usage,"task_tokens");
+    string target=System.IO.Path.Combine(ioDir,"actual_display_reset.json"), temp=System.IO.Path.Combine(ioDir,Guid.NewGuid().ToString("N")+".tmp");
+    try { File.WriteAllText(temp,js.Serialize(reset),new UTF8Encoding(false)); if(File.Exists(target)) File.Replace(temp,target,null); else File.Move(temp,target); }
+    finally { if(File.Exists(temp)) File.Delete(temp); }
+  }
+  Button SmallButton(string text, Action click, bool primary) {
+    var button=new Button { Content=text, Padding=new Thickness(14,7,14,7), Margin=new Thickness(6,0,0,0), Cursor=Cursors.Hand, FontSize=12,
+      Background=primary ? new SolidColorBrush(C2) : new SolidColorBrush(Soft), Foreground=primary ? Brushes.White : new SolidColorBrush(Ink), BorderThickness=new Thickness(0) };
+    var border=new FrameworkElementFactory(typeof(Border));border.SetValue(Border.CornerRadiusProperty,new CornerRadius(8));
+    border.SetBinding(Border.BackgroundProperty,new System.Windows.Data.Binding("Background"){RelativeSource=new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)});
+    border.SetBinding(Border.PaddingProperty,new System.Windows.Data.Binding("Padding"){RelativeSource=new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent)});
+    var presenter=new FrameworkElementFactory(typeof(ContentPresenter));presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty,HorizontalAlignment.Center);border.AppendChild(presenter);
+    button.Template=new ControlTemplate(typeof(Button)){VisualTree=border};button.Click+=(s,e)=>click();return button;
+  }
+  Window RoundedDialog(string title, out StackPanel body) {
+    var w=new Window {Title="YA · "+title,Owner=this,WindowStyle=WindowStyle.None,AllowsTransparency=true,Background=Brushes.Transparent,ResizeMode=ResizeMode.NoResize,
+      ShowInTaskbar=false,SizeToContent=SizeToContent.WidthAndHeight,FontFamily=FontFamily,UseLayoutRounding=true,WindowStartupLocation=WindowStartupLocation.CenterOwner};
+    TextOptions.SetTextFormattingMode(w,TextFormattingMode.Display);
+    var frame=new Border {Width=350,CornerRadius=new CornerRadius(15),BorderThickness=new Thickness(1),BorderBrush=new SolidColorBrush(Edge),Background=Brushes.White,Padding=new Thickness(18),Margin=new Thickness(12),Effect=new DropShadowEffect{BlurRadius=12,ShadowDepth=2,Opacity=0.12}};
+    var stack=new StackPanel();frame.Child=stack;
+    var head=new DockPanel {Margin=new Thickness(0,0,0,12)};
+    var close=new TextBlock{Text="×",FontSize=18,Foreground=new SolidColorBrush(Sub),Cursor=Cursors.Hand,Padding=new Thickness(6,0,0,0)};
+    close.MouseLeftButtonUp+=(s,e)=>w.Close();DockPanel.SetDock(close,Dock.Right);head.Children.Add(close);
+    var caption=new TextBlock{Text=title,FontSize=14,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Ink),Padding=new Thickness(0,3,0,0)};
+    caption.MouseLeftButtonDown+=(s,e)=>{if(e.ChangedButton==MouseButton.Left)try{w.DragMove();}catch{}};head.Children.Add(caption);stack.Children.Add(head);
+    body=new StackPanel();stack.Children.Add(new ScrollViewer{Content=body,MaxHeight=460,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled});
+    w.Content=frame;w.KeyDown+=(s,e)=>{if(e.Key==Key.Escape)w.Close();};return w;
+  }
+  void InfoRow(StackPanel body,string label,string value) {
+    var row=new Grid{Margin=new Thickness(0,5,0,5)};row.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(100)});row.ColumnDefinitions.Add(new ColumnDefinition());
+    row.Children.Add(new TextBlock{Text=label,FontSize=12,Foreground=new SolidColorBrush(Sub)});
+    var text=new TextBlock{Text=value,FontSize=12,Foreground=new SolidColorBrush(Ink),TextWrapping=TextWrapping.Wrap};Grid.SetColumn(text,1);row.Children.Add(text);body.Children.Add(row);
+  }
+  void ShowReset() {
+    StackPanel body;var w=RoundedDialog("重置统计",out body);
+    body.Children.Add(new TextBlock{Text="清零显示统计，经验和任务记录保留。",FontSize=12,Foreground=new SolidColorBrush(Sub),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,2,0,18)});
+    var buttons=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
+    buttons.Children.Add(SmallButton("取消",()=>w.Close(),false));buttons.Children.Add(SmallButton("重置",()=>{ResetActualDisplay();ResetAll();w.Close();},true));body.Children.Add(buttons);w.ShowDialog();
+  }
+  void FillActualTotals() {
+    if(totBody==null) return;totBody.Children.Clear();int calls=0,reused=0;double seconds=0;var tasks=new HashSet<string>();
+    foreach(var e in ActualEvents()) {
+      if(!AfterDisplayReset(e))continue;var d=Has(e,"data") ? e["data"] as Dictionary<string,object> : null;
+      if(Str(e,"kind")=="runtime" && Retrieval(d))calls++;
+      if(VerifiedEvent(e)){tasks.Add(Str(d,"task"));seconds+=Num(d,"elapsed_ms")/1000;if(Str(d,"reused_experience")!="")reused++;}
+    }
+    var sessions=UsageSessions();var reset=ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"));var bases=Has(reset,"sessions") ? reset["sessions"] as Dictionary<string,object> : null;double tokens=0;
+    foreach(var session in sessions){double baseline=bases!=null && bases.ContainsKey(session.Key) ? Convert.ToDouble(bases[session.Key],IC) : 0;tokens+=Math.Max(0,Convert.ToDouble(session.Value,IC)-baseline);}
+    int softwareTotal=0;var slots=ReadJson(System.IO.Path.Combine(libDir,"槽位.json"));var allSlots=Has(slots,"slots") ? JArr(slots["slots"]) : null;if(allSlots!=null)foreach(var item in allSlots){string id=Str(item as Dictionary<string,object>,"id");if(id!="generic" && id!="all" && System.Text.RegularExpressions.Regex.IsMatch(id,"^[a-z][a-z0-9_-]{0,31}$"))softwareTotal+=SoftwareCount(id);}
+    InfoRow(totBody,"经验库","通用 "+CommonCount()+" · 软件 "+softwareTotal);
+    InfoRow(totBody,"已核验任务",tasks.Count.ToString(IC));InfoRow(totBody,"检索 / 调取",calls+" 次");InfoRow(totBody,"成功复用",reused+" 次");
+    InfoRow(totBody,"累计 Token",sessions.Count>0 ? Big(tokens) : "未统计");InfoRow(totBody,"Token 节省","待对照");InfoRow(totBody,"软件执行 / 核验",DurText(seconds));
+    totBody.Children.Add(new TextBlock{Text=reset==null ? "本工作区 · 持久化记录" : "本工作区 · 自上次重置起",FontSize=11,Foreground=new SolidColorBrush(Sub),Margin=new Thickness(0,12,0,0),ToolTip="Token仅汇总已接入的实测会话；不代表整个平台账户用量。"});
+  }
+  void AddMethodRows(StackPanel body,string dir,string prefix) {
+    int count=0;foreach(var row in IndexEntries(dir)) {
+      if(++count>20)break;
+      string file=Str(row,"f"), full="";Dictionary<string,object> record=null;
+      try{full=System.IO.Path.GetFullPath(System.IO.Path.Combine(dir,file));if(full.StartsWith(System.IO.Path.GetFullPath(dir)+System.IO.Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase) && full.EndsWith(".json",StringComparison.OrdinalIgnoreCase))record=ReadJson(full);}catch{}
+      string title=JText(row,"t","title","name"),id=Str(row,"id");
+      var item=new Expander{Header=new TextBlock{Text=prefix+" · "+title,TextWrapping=TextWrapping.Wrap},FontSize=12,Margin=new Thickness(0,7,0,7),Foreground=new SolidColorBrush(Ink)};
+      var content=new StackPanel();item.Content=content;
+      string status=record==null ? "记录缺失" : Str(record,"lifecycle")=="withdrawn" ? "已停用" : JFlag(record,"independently_verified") ? "独立核验" : "待核验";
+      InfoRow(content,"编号",id);InfoRow(content,"状态",status);
+      var recipe=Has(record,"recipe") ? record["recipe"] as Dictionary<string,object> : null;
+      var conditions=Has(recipe,"conditions") ? recipe["conditions"] as Dictionary<string,object> : null;
+      if(conditions!=null)InfoRow(content,"适用条件",Str(conditions,"software")+" "+Str(conditions,"version")+" · "+Str(conditions,"interface"));
+      if(Has(conditions,"parameters"))InfoRow(content,"参数",js.Serialize(conditions["parameters"]));
+      InfoRow(content,"来源",recipe!=null ? JText(recipe,"source") : JText(record,"source"));InfoRow(content,"适用边界",Str(recipe,"applicability"));
+      var steps=Has(recipe,"steps") ? JArr(recipe["steps"]) : null;if(steps!=null)foreach(var step in steps)content.Children.Add(new TextBlock{Text="· "+Convert.ToString(step,IC),FontSize=12,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,4,0,0)});
+      if(Has(record,"context")) {var context=record["context"] as Dictionary<string,object>;InfoRow(content,"验证任务",Str(context,"task"));}
+      // Evidence stays available on demand, without dumping the event ledger into the main dialog.
+      var evidence=new Expander{Header="原始记录",FontSize=11,Foreground=new SolidColorBrush(Sub),Margin=new Thickness(0,10,0,0)};
+      evidence.Content=new TextBox{Text=record==null ? "记录缺失" : js.Serialize(record),IsReadOnly=true,TextWrapping=TextWrapping.Wrap,MaxHeight=160,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};content.Children.Add(evidence);body.Children.Add(item);
+    }
+    if(count>20)body.Children.Add(new TextBlock{Text="显示前20条，完整记录保存在本机经验库。",FontSize=11,Foreground=new SolidColorBrush(Sub)});
+  }
+
   void ShowMoney(bool live) { ShowActualUsage(); }
   void ShowActualUsage() {
     var d = ReadJson(System.IO.Path.Combine(ioDir, "actual_usage.json"));
@@ -1373,7 +1507,10 @@ public class YaCard : Window {
     uTokn.Text = known ? "tok · 挂接后" : "";
     vTok.Text = "待对照"; uTok.Text = "Token 节省";
     tTokn.ToolTip = known ? "运行环境实测 · " + Str(d,"model") + "\n会话累计 " + Num(d,"total_tokens") + "\n来源时间 " + Str(d,"source_time") + "\n点击查看来源与任务" : "未接入真实用量源；不使用估算";
-    shownTok = known ? Num(d,"task_tokens") : 0;
+    var reset=ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"));
+    double baseline=known && Str(reset,"session")==Str(d,"session") && Str(reset,"task")==Str(d,"task") ? Num(reset,"task_tokens") : 0;
+    shownTok = known ? Math.Max(0,Num(d,"task_tokens")-baseline) : 0;
+    if(known) vTokn.Text=Big(shownTok);
   }
   string ActualDetails() {
     var b = new StringBuilder("真实事件记录（命中/调取不等于复用成功）\nToken 节省：待对照\n\n");
@@ -1389,24 +1526,14 @@ public class YaCard : Window {
   }
   void ShowActualEvents() {
     int calls=0, verified=0, reused=0; double measuredSeconds=0, retrievalSeconds=0;
-    var flow=ReadJson(System.IO.Path.Combine(libDir,"流程.json"));
-    var current=flow!=null && Has(flow,"current") ? flow["current"] as Dictionary<string,object> : null;
-    if(current==null && flow!=null && Has(flow,"history")) {
-      var history=flow["history"] as object[];
-      if(history!=null && history.Length>0) current=history[history.Length-1] as Dictionary<string,object>;
-    }
-    string task=current==null ? "" : Str(current,"id");
-    if(current!=null) {
-      string slot=Str(current,"slot");
-      if(System.Text.RegularExpressions.Regex.IsMatch(slot,"^[a-z][a-z0-9_-]{0,31}$")) {
-        var ix=ReadJson(System.IO.Path.Combine(libDir,"槽",slot,"索引.json"));
-        var entries=ix!=null && Has(ix,"entries") ? ix["entries"] as object[] : null;
-        vAll.Text="候选 "+genIds.Count+" · 本槽正式 "+(entries==null ? 0 : entries.Length);
-      }
-    }
+    var current=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));
+    string task=Str(current,"id"), slot=TaskSlot();
+    int common=CommonCount(), software=SoftwareCount(slot);
+    vAll.Text="通用 "+common+" · 软件 "+software;uAll.Text="";
+    tAll.ToolTip="库存数量，不随调用次数变化。通用正式 "+IndexEntries(System.IO.Path.Combine(libDir,"槽","generic")).Count+"，候选知识 "+IndexEntries(System.IO.Path.Combine(libDir,"通用技能库")).Count+"；软件为当前任务槽。";
     string events=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(ioDir),"events");
     if (Directory.Exists(events)) foreach(string f in Directory.GetFiles(events,"*.json")) {
-      var ev=ReadJson(f); if(ev==null) continue;
+      var ev=ReadJson(f); if(ev==null || !AfterDisplayReset(ev)) continue;
       if(Str(ev,"kind")=="experience_verified") {
         var proof=ev["data"] as Dictionary<string,object>;
         if(proof!=null && task!="" && Str(proof,"task")==task && Str(proof,"slot")==Str(current,"slot") && (Str(proof,"verification")=="independent_software_readback" || Str(proof,"verification")=="independent_adapter_readback")) {
@@ -1428,23 +1555,41 @@ public class YaCard : Window {
     tTime.ToolTip="软件执行及独立验证："+measuredSeconds.ToString("0.###",IC)+" 秒；检索/调取："+retrievalSeconds.ToString("0.###",IC)+" 秒。来源为持久化事件。";
 
     tLib.ToolTip="适配器回报不等于独立工程验收；点击查看原始事件。";
-    if(current!=null) dSub.Text=Str(current,"title")+" · "+Str(current,"status")+" · 已核验复用 "+reused.ToString(IC);
+    if(current!=null) dSub.Text=Str(current,"title")+" · "+Str(current,"status");
     try {
       var view=new Dictionary<string,object>();
       view["rendered_utc"]=DateTime.UtcNow.ToString("o");view["task_id"]=task;
       view["token_text"]=vTokn.Text;view["savings_text"]=vTok.Text;
-      view["library_text"]=vAll.Text;view["retrieval_calls"]=calls;view["verified_new"]=verified;view["successful_reuses"]=reused;
+      view["library_text"]=vAll.Text;view["common_entries"]=common;view["software_entries"]=software;view["task_percent"]=taskPct;view["task_status"]=Str(current,"status");view["retrieval_calls"]=calls;view["verified_new"]=verified;view["successful_reuses"]=reused;
       view["task_text"]=dSub.Text;view["software_status"]=LinkText();view["measured_seconds"]=measuredSeconds;view["retrieval_seconds"]=retrievalSeconds;
       File.WriteAllText(System.IO.Path.Combine(ioDir,"hud_view.json"),js.Serialize(view),new UTF8Encoding(false));
     } catch { }
+    if(totWin!=null) FillActualTotals();
 
+  }
+  void ShowUsageDetails() {
+    StackPanel body;var w=RoundedDialog("用量来源",out body);
+    var data=ReadJson(System.IO.Path.Combine(ioDir,"actual_usage.json"));
+    if(Str(data,"source_kind")!="runtime_measured") InfoRow(body,"Token","未统计 · 尚未接入真实来源");
+    else {
+      InfoRow(body,"服务商",Str(data,"provider"));InfoRow(body,"模型",Str(data,"model"));
+      InfoRow(body,"输入 Token",Big(Num(data,"input_tokens")));InfoRow(body,"输出 Token",Big(Num(data,"output_tokens")));
+      InfoRow(body,"会话累计",Big(Num(data,"total_tokens")));InfoRow(body,"本次显示",vTokn.Text);InfoRow(body,"来源时间",Str(data,"source_time"));
+      var provenance=new Expander{Header="来源记录",FontSize=11,Foreground=new SolidColorBrush(Sub),Margin=new Thickness(0,8,0,0)};
+      var info=new StackPanel();InfoRow(info,"会话",Str(data,"session"));InfoRow(info,"任务",Str(data,"task"));InfoRow(info,"日志",Str(data,"source"));provenance.Content=info;body.Children.Add(provenance);
+    }
+    InfoRow(body,"Token 节省","待对照");w.Show();
   }
   void ShowActualDetails() {
-    var w = new Window { Title="YA · 真实用量与经验事件", Width=760, Height=560, Owner=this };
-    w.Content = new TextBox { Text=ActualDetails(), IsReadOnly=true, TextWrapping=TextWrapping.Wrap, VerticalScrollBarVisibility=ScrollBarVisibility.Auto, HorizontalScrollBarVisibility=ScrollBarVisibility.Auto };
+    StackPanel body;var w=RoundedDialog("经验记录",out body);
+    InfoRow(body,"经验库","通用 "+CommonCount()+" · 软件 "+SoftwareCount(TaskSlot()));
+    body.Children.Add(new TextBlock{Text="点击方法查看条件与验证记录",FontSize=11,Foreground=new SolidColorBrush(Sub),Margin=new Thickness(0,6,0,8)});
+    AddMethodRows(body,System.IO.Path.Combine(libDir,"槽","generic"),"通用");
+    AddMethodRows(body,System.IO.Path.Combine(libDir,"通用技能库"),"候选");
+    string slot=TaskSlot();if(slot!="") AddMethodRows(body,System.IO.Path.Combine(libDir,"槽",slot),"软件");
+    if(CommonCount()+SoftwareCount(slot)==0) body.Children.Add(new TextBlock{Text="还没有经验，完成任务后逐步积累。",Foreground=new SolidColorBrush(Sub),FontSize=12});
     w.Show();
   }
-
 
   int JInt(Dictionary<string, object> d, params string[] keys) {
     if (d == null) return -1;
@@ -1643,6 +1788,9 @@ public class YaCard : Window {
       string cmd = raw.ToLowerInvariant();
       if (cmd == "open" && !open) Toggle();
       else if (cmd == "close" && open) Toggle();
+      else if (cmd == "totals") ShowTotals();
+      else if (cmd == "details") ShowActualDetails();
+      else if (cmd == "reset") ShowReset();
       else if (cmd.StartsWith("shot:")) SaveVisual(raw.Substring(5).Trim());
     } catch { }
   }
@@ -1727,8 +1875,7 @@ public class YaCard : Window {
     Dictionary<string, object> d = ReadJson(f);
     if (d == null) return;
     taskKey = key;
-    object co; d.TryGetValue("current", out co);
-    var cur = co as Dictionary<string, object>;
+    var cur = CurrentTask(d);
     int oldPct = taskPct; bool oldKnown = taskKnown;
     if (cur == null) {
       taskKnown = false; taskDone = false; taskPct = -1; taskWord = "\u672a\u5f00\u4efb\u52a1";
@@ -1831,7 +1978,7 @@ public class YaCard : Window {
     } else { vTime.Text = "0"; uTime.Text = "\u79D2"; tTime.ToolTip = null; }
     Safe(ShowDim);
     Safe(ShowActualEvents);
-    int usesNow = (int)u;
+    int usesNow=0;int.TryParse(vUse.Text,out usesNow);
     Safe(() => ApplyStrip(usesNow, shownTok));
 
   }
@@ -1841,155 +1988,11 @@ public class YaCard : Window {
   // ---------- totals (right-click) ----------
 
   void ShowTotals() {
-    ShowActualDetails(); return;
-#pragma warning disable 162
-
-    if (totWin != null) { totWin.Activate(); return; }
-
-    var w = new Window { Title = "YA \u603B\u8BA1", WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent, ResizeMode = ResizeMode.NoResize,
-
-      ShowInTaskbar = false, SizeToContent = SizeToContent.WidthAndHeight, Topmost = true, FontFamily = FontFamily, UseLayoutRounding = true, Owner = this };
-
-    TextOptions.SetTextFormattingMode(w, TextFormattingMode.Display);
-
-    var card = new Border { CornerRadius = new CornerRadius(14), Background = new LinearGradientBrush(C1, C2, 0), Margin = new Thickness(18, 14, 18, 22),
-
-      Effect = new DropShadowEffect { BlurRadius = 16, ShadowDepth = 3, Direction = 270, Opacity = 0.13, Color = Colors.Black } };
-
-    var inner = new Border { CornerRadius = new CornerRadius(13, 13, 14, 14), Background = Brushes.White, Margin = new Thickness(0, 2, 0, 0), Padding = new Thickness(16, 9, 14, 10) };
-
-    card.Child = inner; var root = new StackPanel { Width = 256 }; inner.Child = root;
-
-    var head = new Grid { Height = 24 };
-
-    head.Children.Add(new TextBlock { Text = "\u603B\u8BA1", FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Ink), VerticalAlignment = VerticalAlignment.Center });
-
-    var x = new TextBlock { Text = "\u2715", FontSize = 11, Foreground = new SolidColorBrush(Sub), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, Padding = new Thickness(6, 2, 0, 2), ToolTip = "\u5173\u95ED" };
-
-    x.MouseLeftButtonDown += (s, e) => { e.Handled = true; };
-
-    x.MouseLeftButtonUp += (s, e) => { e.Handled = true; w.Close(); };
-
-    head.Children.Add(x); root.Children.Add(head);
-
-    root.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Line), Margin = new Thickness(0, 6, 0, 6) });
-
-    totBody = new StackPanel(); root.Children.Add(totBody);
-
-    w.Content = card;
-
-    card.MouseLeftButtonDown += (s, e) => { try { w.DragMove(); } catch { } };
-
-    w.KeyDown += (s, e) => { if (e.Key == Key.Escape) w.Close(); };
-
-    w.Closed += (s, e) => { totWin = null; totBody = null; };
-
-    totWin = w; totSig = ""; FillTotals();
-#pragma warning restore 162
-
-    w.WindowStartupLocation = WindowStartupLocation.Manual; w.Left = Left - 18; w.Top = Top + ActualHeight - 8;
-
-    w.Loaded += (s, e) => { var wa = SystemParameters.WorkArea;
-
-      if (w.Top + w.ActualHeight > wa.Bottom) w.Top = Math.Max(wa.Top, Top - w.ActualHeight + 14);
-
-      if (w.Left + w.ActualWidth > wa.Right) w.Left = Math.Max(wa.Left, wa.Right - w.ActualWidth); };
-
-    w.Show();
-
+    if(totWin!=null){totWin.Activate();return;}
+    StackPanel body;var w=RoundedDialog("总计",out body);totWin=w;totBody=body;
+    w.Closed+=(s,e)=>{totWin=null;totBody=null;};FillActualTotals();w.Show();
   }
-
-  void Sec(string t) { totBody.Children.Add(new TextBlock { Text = t, FontSize = 11.5, Foreground = new SolidColorBrush(C2), Margin = new Thickness(0, 6, 0, 2) }); }
-
-  void Row(string k, string v) {
-
-    var g = new Grid { Margin = new Thickness(0, 1, 0, 1) };
-
-    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) }); g.ColumnDefinitions.Add(new ColumnDefinition());
-
-    var a = new TextBlock { Text = k, FontSize = 12, Foreground = new SolidColorBrush(Sub) };
-
-    var b = new TextBlock { Text = v, FontSize = 12, Foreground = new SolidColorBrush(Ink), TextWrapping = TextWrapping.Wrap }; Grid.SetColumn(b, 1);
-
-    g.Children.Add(a); g.Children.Add(b); totBody.Children.Add(g);
-
-  }
-
-  void FillTotals() {
-
-    if (totBody == null) return;
-
-    totBody.Children.Clear();
-
-    Sec("\u672C\u6B21");
-
-    int savedNow = libKnown ? NewIn(libIds, bLib) : 0;
-
-    string payNow = vTok == null ? "\u2014" : (vTok.Text + (uTok != null && uTok.Text != "" ? " " + uTok.Text : ""));
-
-    string timeNow = vTime == null ? "\u2014" : (vTime.Text + (uTime != null && uTime.Text != "" ? " " + uTime.Text : ""));
-
-    Row("\u6D88\u8017", payNow);
-
-    Row("\u7528\u65F6", timeNow);
-
-    bool so2 = SoftOn(); Row("\u65B0\u6536", "\u901A\u7528 " + NewIn(genIds, bGenLib) + "  \u00B7  \u8F6F\u4EF6 " + (so2 ? savedNow.ToString(IC) : "\u2014") + " \u6761");
-
-    Sec("\u7ECF\u9A8C\u5E93");
-
-    Row("\u603B\u6761\u6570", libKnown ? ("\u901A\u7528 " + genIds.Count + "  \u00B7  \u8F6F\u4EF6 " + (so2 ? libN.ToString(IC) : "\u2014") + " \u6761") : "\u2014");
-
-    LibBars();
-
-    Sec("\u8FD9\u6B21\u8FDE\u63A5\uFF08\u6574\u4E2A\u4F1A\u8BDD\uFF09");
-
-    if (stats != null && snap) {
-
-      bool zz = zOn && cUses >= zUses && cEst >= zEst;   // after "全部重置": show only what came after it (session counters restarted = drop the baseline)
-      double sU = zz ? cUses - zUses : cUses, sI = zz ? Math.Max(0, cIn - zIn) : cIn, sC = zz ? Math.Max(0, cCa - zCa) : cCa, sO = zz ? Math.Max(0, cOut - zOut) : cOut;
-      double sE = zz ? Math.Max(0, cEst - zEst) : cEst, sR = zz ? Math.Max(0, cReal - zReal) : cReal, sT = zz ? Math.Max(cTaskStart, zT) : cTaskStart;
-
-      Row("\u8C03\u7528", (int)sU + " \u6B21");
-
-      bool sr = sI + sC + sO > 0;
-
-      Row("\u603B TOKEN", sr ? Big(sI + sC + sO) : (sE > 0 ? Big(sE) + "\uFF08\u4F30\uFF09" : (zz ? "0" : "\u2014")));
-
-      Row("\u6D88\u8017", MoneyText(sI, sC, sO, sE, sR > 0 || sr));
-
-      if (sr) SplitBars(sI, sC, sO);
-
-      else if (sE > 0) Row("\u4F30\u7B97", Big(sE) + " token");
-
-      double end = Math.Max(Math.Max(lastStats, agentTime), zz ? zT : 0);
-
-      Row("\u7528\u65F6", sT > 0 && end >= sT ? DurText(end - sT) : "\u2014");
-
-    } else Row("\u8C03\u7528", "\u8FD8\u6CA1\u6709\u5F00\u59CB");
-
-    Sec(tSince > 0 ? "\u672C\u673A\u7D2F\u8BA1\uFF08" + Clock(tSince) + " \u8D77\uFF09" : "\u672C\u673A\u7D2F\u8BA1");
-
-    Row("\u8C03\u7528", (int)tUses + " \u6B21");
-
-    bool tr = tIn + tCa + tOut > 0;
-
-    Row("\u603B TOKEN", tr ? Big(tIn + tCa + tOut) : (tEst > 0 ? Big(tEst) + "\uFF08\u4F30\uFF09" : "\u2014"));
-
-    Row("\u6D88\u8017", MoneyText(tIn, tCa, tOut, tEst, tr));
-
-    if (tr) SplitBars(tIn, tCa, tOut);
-
-    else if (tEst > 0) Row("\u4F30\u7B97", Big(tEst) + " token");
-
-    Row("\u6D3B\u8DC3\u7528\u65F6", tSec > 0 ? DurText(tSec) : "\u2014");
-
-    totBody.Children.Add(new TextBlock { Text = "\u60AC\u505C\u6A2A\u6761\u770B\u660E\u7EC6 \u00B7 \u4EF7\u683C\u53C2\u8003 DeepSeek V4.1", FontSize = 10.5,
-
-      Foreground = new SolidColorBrush(Sub), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
-
-  }
-
-
+  void FillTotals() { FillActualTotals(); }
 
   // keep the whole card on screen (an old place may come from a bigger window)
 
