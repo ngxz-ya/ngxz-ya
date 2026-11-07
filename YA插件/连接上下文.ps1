@@ -5,10 +5,11 @@ if (-not $PathsOnly -and -not ('YaEvidence' -as [type])) {
   Add-Type -Path (Join-Path $PSScriptRoot '连接证据.cs') -ReferencedAssemblies System.Web.Extensions
 }
 function Assert-YaIsolatedPackage([string]$Package) {
+  if(Test-Path -LiteralPath (Join-Path $Package '更新中.json')){throw 'UPDATE_INCOMPLETE: 更新未完成，保留现场并从备份恢复程序后再运行'}
   $marker=Join-Path $Package '包信息.json'
   if(-not (Test-Path -LiteralPath $marker -PathType Leaf)){throw 'SOURCE_READ_ONLY: 研发源码禁止运行。请先用准备隔离包.ps1生成新副本。'}
   $info=Get-Content -LiteralPath $marker -Raw -Encoding UTF8|ConvertFrom-Json
-  if($info.schema -ne 2 -or $info.stage -notin @('TestCopy','AuditCandidate')){throw 'ISOLATION_METADATA_INVALID: 请从当前源码重新生成隔离副本。'}
+  if($info.schema -ne 2 -or $info.stage -notin @('TestCopy','AuditCandidate','UserWorkspace')){throw 'ISOLATION_METADATA_INVALID: 请从当前源码重新生成隔离副本。'}
 }
 function Get-YaHudInstanceName([string]$PluginDir, [string]$HudHome) {
   $identity = [IO.Path]::GetFullPath($PluginDir).TrimEnd('\').ToLowerInvariant() + '|' + [IO.Path]::GetFullPath($HudHome).TrimEnd('\').ToLowerInvariant()
@@ -17,6 +18,8 @@ function Get-YaHudInstanceName([string]$PluginDir, [string]$HudHome) {
 }
 function Get-YaPackageHudHome([string]$Package, [string]$Base = '') {
   Assert-YaIsolatedPackage $Package
+  $info=Get-Content -LiteralPath (Join-Path $Package '包信息.json') -Raw -Encoding UTF8|ConvertFrom-Json
+  if($info.stage -eq 'UserWorkspace'){return (Join-Path $Package '运行状态')}
   if (-not $Base) { $Base = $env:YALINK_HUD_HOME }
   if (-not $Base) {
     $Base = Join-Path $env:LOCALAPPDATA 'YAHud'

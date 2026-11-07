@@ -1409,7 +1409,7 @@ public class YaCard : Window {
       var ev=ReadJson(f); if(ev==null) continue;
       if(Str(ev,"kind")=="experience_verified") {
         var proof=ev["data"] as Dictionary<string,object>;
-        if(proof!=null && task!="" && Str(proof,"task")==task && Str(proof,"slot")==Str(current,"slot") && Str(proof,"verification")=="independent_software_readback") {
+        if(proof!=null && task!="" && Str(proof,"task")==task && Str(proof,"slot")==Str(current,"slot") && (Str(proof,"verification")=="independent_software_readback" || Str(proof,"verification")=="independent_adapter_readback")) {
           verified++; measuredSeconds+=Num(proof,"elapsed_ms")/1000.0; if(Str(proof,"reused_experience")!="") reused++;
         }
         continue;

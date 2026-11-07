@@ -14,9 +14,10 @@ function Write-YaAtomic([string]$Path, $Value) {
   $dir = Split-Path $Path -Parent
   [IO.Directory]::CreateDirectory($dir) | Out-Null
   $tmp = Join-Path $dir ([guid]::NewGuid().ToString('N') + '.tmp')
+  $backup = [IO.Path]::ChangeExtension($tmp, '.bak')
   try {
     [IO.File]::WriteAllText($tmp, (ConvertTo-Json -InputObject $Value -Depth 30), [Text.UTF8Encoding]::new($true))
-    if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tmp, $Path, ($tmp + '.bak')); [IO.File]::Delete($tmp + '.bak') } else { [IO.File]::Move($tmp, $Path) }
+    if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tmp, $Path, $backup); [IO.File]::Delete($backup) } else { [IO.File]::Move($tmp, $Path) }
   } finally { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } }
 }
 function Add-YaActualEvent([string]$Package, [string]$Kind, $Data) {

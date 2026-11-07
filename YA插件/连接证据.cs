@@ -9,6 +9,9 @@ public static class YaEvidence {
   }
   public static string Work(string pkg, string slot) {
     if (!System.Text.RegularExpressions.Regex.IsMatch(slot, "^[a-z][a-z0-9_-]{0,31}$") || slot == "all" || slot == "generic") throw new System.ArgumentException("slot= must be a dedicated slot id");
+    string marker = System.IO.Path.Combine(pkg, "包信息.json");
+    if (System.IO.File.Exists(marker) && S(Read(marker), "stage") == "UserWorkspace")
+      return System.IO.Path.Combine(System.IO.Directory.GetParent(pkg).FullName, "成果", slot, Identity(pkg));
     string root = System.Environment.GetEnvironmentVariable("LOCALAPPDATA");
     if (System.Text.RegularExpressions.Regex.IsMatch(root, @"[^\x00-\x7F]")) root = System.Environment.GetEnvironmentVariable("ProgramData");
     return System.IO.Path.Combine(root, "YALink", "work", slot, Identity(pkg));
