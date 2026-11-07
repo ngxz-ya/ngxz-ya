@@ -273,7 +273,7 @@ public class YaCard : Window {
     barRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
     var ya = new Grid { Height = 34, Background = Brushes.Transparent, Cursor = Cursors.SizeAll, ToolTip = "所属包：" + System.IO.Path.GetDirectoryName(libDir), Margin = new Thickness(0, 0, 9, 0) };
     var yaWord = new TextBlock {
-      Text = "YA", FontWeight = FontWeights.Bold, Foreground = new LinearGradientBrush(C1, C2, 0),
+      Text = "YA", FontSize=20, FontFamily=NumFont, FontWeight = FontWeights.Bold, Foreground = new LinearGradientBrush(C1, C2, 0),
       VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 1) };
     ya.Children.Add(yaWord);
     ya.MouseLeftButtonDown += (s, e) => { e.Handled = true; Drag(); };
@@ -299,7 +299,7 @@ public class YaCard : Window {
     sLabel = new TextBlock { Text = "\u8c03\u7528", FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Sub), VerticalAlignment = VerticalAlignment.Center };
     var sv = new DockPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) };
     stripText = new TextBlock {
-      Text = "0", FontWeight = FontWeights.SemiBold, FontFamily = NumFont,
+      Text = "0", FontSize=19, FontWeight = FontWeights.Light, FontFamily = NumFont,
       Foreground = new SolidColorBrush(Ink), VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Right,
       TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.NoWrap };
     sUnit = new TextBlock { Text = "\u6b21", Foreground = new SolidColorBrush(Sub), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 0, 0, 0) };
@@ -319,19 +319,19 @@ public class YaCard : Window {
     barRow.Children.Add(closeX);
     root.Children.Add(barRow);
     // expanded: three white cards of the same style (TOKEN / experience / pass rate) on a soft tray
-    var tray0 = new Border { Margin = new Thickness(0, 6, 0, 0) };
+    var tray0 = new Border { Background = new SolidColorBrush(Soft), CornerRadius = new CornerRadius(10), Padding = new Thickness(6, 6, 6, 0), Margin = new Thickness(-6, 10, -4, 0) };
     detail = new StackPanel { Width = 302, Visibility = Visibility.Collapsed };
-    var tokBody = MkCard(detail, "TOKEN", out vTokn, out uTokn, "tok"); tTokn = lastRow;
-    Mini(tokBody, "\u6d88\u8017", out vTok, out uTok, "\u5143"); tTok = lastRow;
-    Mini(tokBody, "\u7528\u65f6", out vTime, out uTime, ""); tTime = lastRow;
-    var expBody = MkCard(detail, "\u7ecf\u9a8c\u68C0\u7D22", out vUse, out uUse, "\u6b21"); tUse = lastRow;
+    var tokBody = MkCard(detail, "TOKEN", "本次", out vTokn, out uTokn, "tok"); tTokn = lastRow;
+    // Legacy computation fields stay available for details, without a visible TOKEN footer.
+    vTok=new TextBlock();uTok=new TextBlock();tTok=new Border();vTime=new TextBlock();uTime=new TextBlock();tTime=new Border();
+    var expBody = MkCard(detail, "经验调用", "本次", out vUse, out uUse, "\u6b21"); tUse = lastRow;
     Mini(expBody, "\u7ecf\u9a8c\u5e93", out vAll, out uAll, "\u6761"); tAll = lastRow;
     Mini(expBody, "\u65b0\u6536", out vLib, out uLib, "\u6761"); tLib = lastRow;
     foreach (var row in new FrameworkElement[] { tAll, tUse, tLib, tTokn }) {
       row.Cursor = Cursors.Hand;
       row.MouseLeftButtonUp += (s, e) => { e.Handled = true; if(row==tTokn) ShowUsageDetails(); else ShowActualDetails(); };
     }
-    var rateBody = MkCard(detail, "\u4EFB\u52A1\u5B8C\u6210\u5EA6", out vRate, out uRate, "%"); tRate = lastRow;
+    var rateBody = MkCard(detail, "任务完成度", "本次任务", out vRate, out uRate, "%"); tRate = lastRow;
     dSub = new TextBlock { Text = "", Foreground = new SolidColorBrush(Sub), Margin = new Thickness(0, 3, 0, 0), TextWrapping = TextWrapping.Wrap };
     rateBody.Children.Add(dSub);
     tray0.Child = detail;
@@ -1460,21 +1460,50 @@ public class YaCard : Window {
     var buttons=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
     buttons.Children.Add(SmallButton("取消",()=>w.Close(),false));buttons.Children.Add(SmallButton("重置",()=>{ResetActualDisplay();ResetAll();w.Close();},true));body.Children.Add(buttons);w.ShowDialog();
   }
-  void FillActualTotals() {
-    if(totBody==null) return;totBody.Children.Clear();int calls=0,reused=0;double seconds=0;var tasks=new HashSet<string>();
-    foreach(var e in ActualEvents()) {
-      if(!AfterDisplayReset(e))continue;var d=Has(e,"data") ? e["data"] as Dictionary<string,object> : null;
-      if(Str(e,"kind")=="runtime" && Retrieval(d))calls++;
-      if(VerifiedEvent(e)){tasks.Add(Str(d,"task"));seconds+=Num(d,"elapsed_ms")/1000;if(Str(d,"reused_experience")!="")reused++;}
+  List<Dictionary<string,object>> InventoryRows() {
+    var rows=new List<Dictionary<string,object>>();var dirs=new HashSet<string>();dirs.Add(System.IO.Path.Combine(libDir,"槽","generic"));
+    var slots=ReadJson(System.IO.Path.Combine(libDir,"槽位.json"));var all=Has(slots,"slots") ? JArr(slots["slots"]) : null;
+    if(all!=null)foreach(var item in all){string id=Str(item as Dictionary<string,object>,"id");if(id!="all" && System.Text.RegularExpressions.Regex.IsMatch(id,"^[a-z][a-z0-9_-]{0,31}$"))dirs.Add(System.IO.Path.Combine(libDir,"槽",id));}
+    dirs.Add(System.IO.Path.Combine(libDir,"通用技能库"));
+    foreach(string dir in dirs)foreach(var row in IndexEntries(dir)){row["_library_dir"]=dir;rows.Add(row);}return rows;
+  }
+  void InventoryBars(List<Dictionary<string,object>> rows) {
+    if(rows.Count==0)return;double moves=0,pits=0,plans=0,other=0,verified=0;
+    foreach(var row in rows){string category=Str(row,"c");if(category=="招式")moves++;else if(category=="坑")pits++;else if(category=="零件方案")plans++;else other++;
+      try{string dir=Str(row,"_library_dir"),file=System.IO.Path.GetFullPath(System.IO.Path.Combine(dir,Str(row,"f")));if(file.StartsWith(dir+System.IO.Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)&&file.EndsWith(".json",StringComparison.OrdinalIgnoreCase)){var record=ReadJson(file);if(JFlag(record,"independently_verified")&&Str(record,"lifecycle")!="withdrawn")verified++;}}catch{}
     }
+    double width=260,total=rows.Count;
+    BarBlock("分类","招式 "+moves+" · 坑 "+pits+" · 方案 "+plans+" · 候选/其他 "+other,
+      Seg(width*moves/total,C2),Seg(width*pits/total,Warn),Seg(width*plans/total,Ok),Seg(width*other/total,Idle));
+    BarBlock("核验记录","有独立核验记录 "+verified+" · 待核验/已停用 "+(total-verified)+"。记录状态不替代本次工程验收。",
+      Seg(width*verified/total,Ok),Seg(width*(total-verified)/total,Idle));
+  }
+  void CurrentTokenBar() {
+    var usage=ReadJson(System.IO.Path.Combine(ioDir,"actual_usage.json"));
+    if(Str(usage,"source_kind")!="runtime_measured" || !Has(usage,"task_input_tokens") || !Has(usage,"task_output_tokens"))return;
+    // A display reset has only a total baseline; do not invent an input/output split after it.
+    if(ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"))!=null)return;
+    double input=Num(usage,"task_input_tokens"),output=Num(usage,"task_output_tokens"),total=input+output;
+    if(input<0||output<0||total<=0||Math.Abs(total-Num(usage,"task_tokens"))>0.001)return;
+    BarBlock("用量构成","本次已接入的实测输入 "+Big(input)+" · 输出 "+Big(output)+" Token；不代表估算费用。",
+      Seg(260*input/total,Color.FromRgb(0x34,0xD3,0x99)),Seg(260*output/total,Color.FromRgb(0x60,0xA5,0xFA)));
+  }
+  void FillActualTotals() {
+    if(totBody==null)return;totBody.Children.Clear();int calls=0,reused=0;double seconds=0;var tasks=new HashSet<string>();
+    foreach(var e in ActualEvents()){if(!AfterDisplayReset(e))continue;var d=Has(e,"data") ? e["data"] as Dictionary<string,object> : null;
+      if(Str(e,"kind")=="runtime" && Retrieval(d))calls++;
+      if(VerifiedEvent(e)){tasks.Add(Str(d,"task"));seconds+=Num(d,"elapsed_ms")/1000;if(Str(d,"reused_experience")!="")reused++;}}
     var sessions=UsageSessions();var reset=ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"));var bases=Has(reset,"sessions") ? reset["sessions"] as Dictionary<string,object> : null;double tokens=0;
     foreach(var session in sessions){double baseline=bases!=null && bases.ContainsKey(session.Key) ? Convert.ToDouble(bases[session.Key],IC) : 0;tokens+=Math.Max(0,Convert.ToDouble(session.Value,IC)-baseline);}
-    int softwareTotal=0;var slots=ReadJson(System.IO.Path.Combine(libDir,"槽位.json"));var allSlots=Has(slots,"slots") ? JArr(slots["slots"]) : null;if(allSlots!=null)foreach(var item in allSlots){string id=Str(item as Dictionary<string,object>,"id");if(id!="generic" && id!="all" && System.Text.RegularExpressions.Regex.IsMatch(id,"^[a-z][a-z0-9_-]{0,31}$"))softwareTotal+=SoftwareCount(id);}
-    InfoRow(totBody,"经验库","通用 "+CommonCount()+" · 软件 "+softwareTotal);
-    InfoRow(totBody,"已核验任务",tasks.Count.ToString(IC));InfoRow(totBody,"检索 / 调取",calls+" 次");InfoRow(totBody,"成功复用",reused+" 次");
-    InfoRow(totBody,"累计 Token",sessions.Count>0 ? Big(tokens) : "未统计");InfoRow(totBody,"Token 节省","待对照");InfoRow(totBody,"软件执行 / 核验",DurText(seconds));
-    totBody.Children.Add(new TextBlock{Text=reset==null ? "本工作区 · 持久化记录" : "本工作区 · 自上次重置起",FontSize=11,Foreground=new SolidColorBrush(Sub),Margin=new Thickness(0,12,0,0),ToolTip="Token仅汇总已接入的实测会话；不代表整个平台账户用量。"});
+    Sec("本次");Row("TOKEN",vTokn.Text+(uTokn.Text!="" ? " "+uTokn.Text : ""));Row("用时",vTime.Text+uTime.Text);Row("新收",vLib.Text+" 条");Row("成功复用",SuccessfulCurrentReuses()+" 次");
+    CurrentTokenBar();
+    Sec("经验库");var inventory=InventoryRows();Row("总条数",inventory.Count+" 条");InventoryBars(inventory);
+    Sec("本次任务");var current=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));Row("状态",current==null ? "未开任务" : Str(current,"status"));Row("调用",vUse.Text+" 次");
+    Sec(reset==null ? "本工作区累计" : "本工作区累计（重置后）");Row("调用",calls+" 次");Row("总 TOKEN",sessions.Count>0 ? Big(tokens) : "未统计");Row("核验任务",tasks.Count+" 次");Row("成功复用",reused+" 次");Row("软件用时",DurText(seconds));
+    totBody.Children.Add(new TextBlock{Text="悬停条形看明细 · 来自本工作区记录",FontSize=10.5,Foreground=new SolidColorBrush(Sub),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,8,0,0)});
   }
+  int SuccessfulCurrentReuses(){int count=0;string task=Str(CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json"))),"id");foreach(var e in ActualEvents()){var d=Has(e,"data") ? e["data"] as Dictionary<string,object> : null;if(AfterDisplayReset(e)&&VerifiedEvent(e)&&Str(d,"task")==task&&Str(d,"reused_experience")!="")count++;}return count;}
+
   void AddMethodRows(StackPanel body,string dir,string prefix) {
     int count=0;foreach(var row in IndexEntries(dir)) {
       if(++count>20)break;
@@ -1504,7 +1533,7 @@ public class YaCard : Window {
     var d = ReadJson(System.IO.Path.Combine(ioDir, "actual_usage.json"));
     bool known = d != null && Str(d, "source_kind") == "runtime_measured";
     vTokn.Text = known ? Big(Num(d, "task_tokens")) : "未统计";
-    uTokn.Text = known ? "tok · 挂接后" : "";
+    uTokn.Text = known ? "tok" : "";vTokn.FontSize=known ? 24 : 18;
     vTok.Text = "待对照"; uTok.Text = "Token 节省";
     tTokn.ToolTip = known ? "运行环境实测 · " + Str(d,"model") + "\n会话累计 " + Num(d,"total_tokens") + "\n来源时间 " + Str(d,"source_time") + "\n点击查看来源与任务" : "未接入真实用量源；不使用估算";
     var reset=ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"));
@@ -1529,8 +1558,8 @@ public class YaCard : Window {
     var current=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));
     string task=Str(current,"id"), slot=TaskSlot();
     int common=CommonCount(), software=SoftwareCount(slot);
-    vAll.Text="通用 "+common+" · 软件 "+software;uAll.Text="";
-    tAll.ToolTip="库存数量，不随调用次数变化。通用正式 "+IndexEntries(System.IO.Path.Combine(libDir,"槽","generic")).Count+"，候选知识 "+IndexEntries(System.IO.Path.Combine(libDir,"通用技能库")).Count+"；软件为当前任务槽。";
+    vAll.Text=InventoryRows().Count.ToString(IC);uAll.Text="条";
+    tAll.ToolTip="本工作区总库存，不随调用次数变化。通用正式 "+IndexEntries(System.IO.Path.Combine(libDir,"槽","generic")).Count+"，候选知识 "+IndexEntries(System.IO.Path.Combine(libDir,"通用技能库")).Count+"；合计还包含已登记软件槽的条目，按软件分槽保存。";
     string events=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(ioDir),"events");
     if (Directory.Exists(events)) foreach(string f in Directory.GetFiles(events,"*.json")) {
       var ev=ReadJson(f); if(ev==null || !AfterDisplayReset(ev)) continue;
@@ -1548,14 +1577,14 @@ public class YaCard : Window {
       var command=d["command"] as object[];
       if(command!=null && command.Length>0 && (command[0].ToString()=="exp_search" || command[0].ToString()=="exp_recall" || command[0].ToString()=="exp_get" || command[0].ToString()=="skill_search" || command[0].ToString()=="skill_get")) { calls++; retrievalSeconds+=Num(d,"elapsed_ms")/1000.0; }
     }
-    vUse.Text=calls.ToString(IC); uUse.Text="次调用 · 复用 "+reused.ToString(IC);
-    vLib.Text=verified.ToString(IC); uLib.Text="";
+    vUse.Text=calls.ToString(IC); uUse.Text="次";
+    vLib.Text=verified.ToString(IC); uLib.Text="条";
     if(verified>0) { string val,unit; Dur(measuredSeconds,out val,out unit); vTime.Text=val;uTime.Text=unit; }
     else { vTime.Text="未统计";uTime.Text=""; }
     tTime.ToolTip="软件执行及独立验证："+measuredSeconds.ToString("0.###",IC)+" 秒；检索/调取："+retrievalSeconds.ToString("0.###",IC)+" 秒。来源为持久化事件。";
 
     tLib.ToolTip="适配器回报不等于独立工程验收；点击查看原始事件。";
-    if(current!=null) dSub.Text=Str(current,"title")+" · "+Str(current,"status");
+    if(current!=null) dSub.Text="自检 "+taskPass+"/"+taskTotal+" · "+Str(current,"status");
     try {
       var view=new Dictionary<string,object>();
       view["rendered_utc"]=DateTime.UtcNow.ToString("o");view["task_id"]=task;
@@ -1578,7 +1607,7 @@ public class YaCard : Window {
       var provenance=new Expander{Header="来源记录",FontSize=11,Foreground=new SolidColorBrush(Sub),Margin=new Thickness(0,8,0,0)};
       var info=new StackPanel();InfoRow(info,"会话",Str(data,"session"));InfoRow(info,"任务",Str(data,"task"));InfoRow(info,"日志",Str(data,"source"));provenance.Content=info;body.Children.Add(provenance);
     }
-    InfoRow(body,"Token 节省","待对照");w.Show();
+    w.Show();
   }
   void ShowActualDetails() {
     StackPanel body;var w=RoundedDialog("经验记录",out body);
@@ -1733,16 +1762,16 @@ public class YaCard : Window {
     if (lines.Count > 0) dimReport += "\n\n" + string.Join("\n", lines.ToArray());
     else dimReport += "\n\n\u6ca1\u6709\u660e\u7ec6";
   }
-  StackPanel MkCard(StackPanel host, string title, out TextBlock val, out TextBlock unit, string u) {
+  StackPanel MkCard(StackPanel host, string title, string hint, out TextBlock val, out TextBlock unit, string u) {
     var card = new Border { Background = Brushes.White, BorderBrush = new SolidColorBrush(Line), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(9), Padding = new Thickness(12, 8, 12, 9), Margin = new Thickness(0, 0, 0, 6) };
     var sp = new StackPanel(); card.Child = sp;
     var head = new Grid();
-    head.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Sub) });
-
+    head.Children.Add(new TextBlock { Text = title, FontSize = 11.5, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Sub) });
+    head.Children.Add(new TextBlock { Text = hint, FontSize = 10.5, Foreground = new SolidColorBrush(Idle), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center });
     sp.Children.Add(head);
     var vr = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 1, 0, 0) };
-    val = new TextBlock { Text = "\u672A\u7EDF\u8BA1", FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Ink), VerticalAlignment = VerticalAlignment.Center };
-    unit = new TextBlock { Text = u, Foreground = new SolidColorBrush(Sub), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) };
+    val = new TextBlock { Text = "\u2014", FontSize = 24, FontWeight = FontWeights.Light, FontFamily = NumFont, Foreground = new SolidColorBrush(Ink), VerticalAlignment = VerticalAlignment.Bottom };
+    unit = new TextBlock { Text = u, FontSize = 11.5, Foreground = new SolidColorBrush(Sub), VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(5, 0, 0, 5) };
     vr.Children.Add(val); vr.Children.Add(unit); sp.Children.Add(vr);
     host.Children.Add(card);
     lastRow = card;
@@ -1752,9 +1781,9 @@ public class YaCard : Window {
     var wp = card.Tag as WrapPanel;
     if (wp == null) { wp = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) }; card.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Line), Margin = new Thickness(0, 6, 0, 0) }); card.Children.Add(wp); card.Tag = wp; }
     var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 16, 0), Background = Brushes.Transparent };
-    row.Children.Add(new TextBlock { Text = label, Foreground = new SolidColorBrush(Sub), VerticalAlignment = VerticalAlignment.Center });
-    val = new TextBlock { Text = "\u2014", Foreground = new SolidColorBrush(Ink), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
-    unit = new TextBlock { Text = u, Foreground = new SolidColorBrush(Sub), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 0, 0, 0) };
+    row.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = new SolidColorBrush(Sub), VerticalAlignment = VerticalAlignment.Center });
+    val = new TextBlock { Text = "\u2014", FontSize = 12.5, FontFamily = NumFont, Foreground = new SolidColorBrush(Ink), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
+    unit = new TextBlock { Text = u, FontSize = 11, Foreground = new SolidColorBrush(Sub), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 0, 0, 0) };
     row.Children.Add(val); row.Children.Add(unit);
     wp.Children.Add(row);
     lastRow = row;
@@ -1832,7 +1861,7 @@ public class YaCard : Window {
       if (tokAt > best) { best = tokAt; sc = 2; }
       if (dimAt > best) sc = 3;
     }
-    string lab = "\u68C0\u7D22", val = uses.ToString("N0", IC), un = "\u6b21";
+    string lab = "调用", val = uses.ToString("N0", IC), un = "\u6b21";
     Color fg = Ink;
     string tip = "\u672c\u6b21\u8c03\u7528 " + uses.ToString(IC) + " \u6b21";
     if (sc == 2) {
@@ -1988,10 +2017,77 @@ public class YaCard : Window {
   // ---------- totals (right-click) ----------
 
   void ShowTotals() {
-    if(totWin!=null){totWin.Activate();return;}
-    StackPanel body;var w=RoundedDialog("总计",out body);totWin=w;totBody=body;
-    w.Closed+=(s,e)=>{totWin=null;totBody=null;};FillActualTotals();w.Show();
+
+    if (totWin != null) { totWin.Activate(); return; }
+
+    var w = new Window { Title = "YA \u603B\u8BA1", WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent, ResizeMode = ResizeMode.NoResize,
+
+      ShowInTaskbar = false, SizeToContent = SizeToContent.WidthAndHeight, Topmost = true, FontFamily = FontFamily, UseLayoutRounding = true, Owner = this };
+
+    TextOptions.SetTextFormattingMode(w, TextFormattingMode.Display);
+
+    var card = new Border { CornerRadius = new CornerRadius(14), Background = new LinearGradientBrush(C1, C2, 0), Margin = new Thickness(18, 14, 18, 22),
+
+      Effect = new DropShadowEffect { BlurRadius = 16, ShadowDepth = 3, Direction = 270, Opacity = 0.13, Color = Colors.Black } };
+
+    var inner = new Border { CornerRadius = new CornerRadius(13, 13, 14, 14), Background = Brushes.White, Margin = new Thickness(0, 2, 0, 0), Padding = new Thickness(16, 9, 14, 10) };
+
+    card.Child = inner; var root = new StackPanel { Width = 256 }; inner.Child = root;
+
+    var head = new Grid { Height = 24 };
+
+    head.Children.Add(new TextBlock { Text = "\u603B\u8BA1", FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Ink), VerticalAlignment = VerticalAlignment.Center });
+
+    var x = new TextBlock { Text = "\u2715", FontSize = 11, Foreground = new SolidColorBrush(Sub), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, Padding = new Thickness(6, 2, 0, 2), ToolTip = "\u5173\u95ED" };
+
+    x.MouseLeftButtonDown += (s, e) => { e.Handled = true; };
+
+    x.MouseLeftButtonUp += (s, e) => { e.Handled = true; w.Close(); };
+
+    head.Children.Add(x); root.Children.Add(head);
+
+    root.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Line), Margin = new Thickness(0, 6, 0, 6) });
+
+    totBody = new StackPanel(); root.Children.Add(totBody);
+
+    w.Content = card;
+
+    card.MouseLeftButtonDown += (s, e) => { try { w.DragMove(); } catch { } };
+
+    w.KeyDown += (s, e) => { if (e.Key == Key.Escape) w.Close(); };
+
+    w.Closed += (s, e) => { totWin = null; totBody = null; };
+
+    totWin = w; totSig = ""; FillTotals();
+
+    w.WindowStartupLocation = WindowStartupLocation.Manual; w.Left = Left - 18; w.Top = Top + ActualHeight - 8;
+
+    w.Loaded += (s, e) => { var wa = SystemParameters.WorkArea;
+
+      if (w.Top + w.ActualHeight > wa.Bottom) w.Top = Math.Max(wa.Top, Top - w.ActualHeight + 14);
+
+      if (w.Left + w.ActualWidth > wa.Right) w.Left = Math.Max(wa.Left, wa.Right - w.ActualWidth); };
+
+    w.Show();
+
   }
+
+  void Sec(string t) { totBody.Children.Add(new TextBlock { Text = t, FontSize = 11.5, Foreground = new SolidColorBrush(C2), Margin = new Thickness(0, 6, 0, 2) }); }
+
+  void Row(string k, string v) {
+
+    var g = new Grid { Margin = new Thickness(0, 1, 0, 1) };
+
+    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) }); g.ColumnDefinitions.Add(new ColumnDefinition());
+
+    var a = new TextBlock { Text = k, FontSize = 12, Foreground = new SolidColorBrush(Sub) };
+
+    var b = new TextBlock { Text = v, FontSize = 12, Foreground = new SolidColorBrush(Ink), TextWrapping = TextWrapping.Wrap }; Grid.SetColumn(b, 1);
+
+    g.Children.Add(a); g.Children.Add(b); totBody.Children.Add(g);
+
+  }
+
   void FillTotals() { FillActualTotals(); }
 
   // keep the whole card on screen (an old place may come from a bigger window)
