@@ -1,0 +1,12 @@
+﻿{
+    "active":  "generic",
+    "version":  1,
+    "slots":  [
+                  {
+                      "title":  "未指定软件",
+                      "dir":  "generic",
+                      "id":  "generic",
+                      "note":  "出厂空槽"
+                  }
+              ]
+}
