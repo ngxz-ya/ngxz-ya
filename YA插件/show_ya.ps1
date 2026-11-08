@@ -1,10 +1,11 @@
-﻿param([switch]$DesktopHost,[string]$RequestFile,[switch]$WithSoftware)
+﻿param([switch]$DesktopHost,[string]$RequestFile,[switch]$WithSoftware,[string]$HudHome)
 $ErrorActionPreference='Stop'
 $package=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot '连接上下文.ps1')
 . (Join-Path $PSScriptRoot '真实记录.ps1')
 try{
   Assert-YaIsolatedPackage $package
+  if($DesktopHost -and $HudHome){$env:YALINK_HUD_HOME=[IO.Path]::GetFullPath($HudHome)}
   $homePath=Get-YaPackageHudHome $package
   $io=Join-Path $homePath 'io'
   $exe=Join-Path $PSHOME 'powershell.exe'
@@ -13,7 +14,11 @@ try{
     $directory=Join-Path $io ('hud-show\'+$request)
     $RequestFile=Join-Path $directory 'request.json'
     Write-YaAtomic $RequestFile @{request=$request;package_id=[YaEvidence]::Identity($package);issued_utc=[DateTime]::UtcNow.ToString('o');with_software=[bool]$WithSoftware}
-    $hostPid=[YaWindow]::LaunchInteractive($exe,@('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-DesktopHost','-RequestFile',$RequestFile),$package)
+    $startup=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0;WinstationDesktop='WinSta0\Default';CreateFlags=[uint32]0x09000000}
+    $command=@($exe,'-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-DesktopHost','-RequestFile',$RequestFile,'-HudHome',$homePath)
+    $launch=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=(@($command|ForEach-Object{[YaWindow]::Quote([string]$_)}) -join ' ');CurrentDirectory=$package;ProcessStartupInformation=$startup} -OperationTimeoutSec 15
+    if($launch.ReturnValue -ne 0){throw ('HUD_LAUNCH_FAILED: WMI returned '+$launch.ReturnValue+'; no attached fallback was started')}
+    $hostPid=[int]$launch.ProcessId
     $resultFile=Join-Path $directory 'result.json';$until=[DateTime]::UtcNow.AddSeconds(35)
     while(-not [IO.File]::Exists($resultFile) -and [DateTime]::UtcNow -lt $until){Start-Sleep -Milliseconds 200}
     if(-not [IO.File]::Exists($resultFile)){throw ('HUD_NOT_VISIBLE: desktop host did not confirm; pid='+$hostPid+'; evidence='+$directory)}
@@ -37,8 +42,13 @@ try{
     [void]$ready.Reset();Write-YaAtomic (Join-Path $io 'hud_show_request.json') $pending
     $hud=Join-Path $PSScriptRoot 'ya_hud.ps1'
     $args=@('-NoProfile','-STA','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$hud,'-Show')
-    $showPid=[YaWindow]::LaunchInteractive($exe,$args,$package)
-    if(-not $ready.WaitOne(22000)){throw ('HUD_NOT_VISIBLE: no fresh user-desktop window confirmation; launcher pid='+$showPid+'; close an obsolete panel manually if it owns this package')}
+    $showDirectory=Split-Path $RequestFile -Parent
+    $showProcess=Start-Process -FilePath $exe -ArgumentList (@($args|ForEach-Object{[YaWindow]::Quote([string]$_)}) -join ' ') -WorkingDirectory $package -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $showDirectory 'hud.stdout.log') -RedirectStandardError (Join-Path $showDirectory 'hud.stderr.log')
+    [void]$showProcess.Handle;$showPid=$showProcess.Id;$shown=$false;$showUntil=[DateTime]::UtcNow.AddSeconds(22)
+    try{
+      while([DateTime]::UtcNow -lt $showUntil){if($ready.WaitOne(100)){$shown=$true;break};if($showProcess.HasExited -and $showProcess.ExitCode -ne 0){throw ('HUD_START_FAILED: exit='+$showProcess.ExitCode+'; inspect '+(Join-Path $showDirectory 'hud.stderr.log'))}}
+    }finally{$showProcess.Dispose()}
+    if(-not $shown){throw ('HUD_NOT_VISIBLE: no fresh user-desktop window confirmation; launcher pid='+$showPid+'; logs='+$showDirectory+'; close an obsolete panel manually if it owns this package')}
     $proof=Get-Content -LiteralPath (Join-Path $io 'hud_window.json') -Raw -Encoding UTF8|ConvertFrom-Json
     $process=Get-Process -Id $proof.pid -ErrorAction Stop
     if($proof.request -cne $pending.request -or $proof.package_id -cne $pending.package_id -or $proof.desktop -cne 'WinSta0\Default' -or $process.StartTime.ToUniversalTime().Ticks.ToString() -cne $proof.process_start -or -not [YaWindow]::InputVisible([int]$proof.pid,[long]$proof.handle)){throw 'HUD_NOT_VISIBLE: actual process/window does not match this request'}

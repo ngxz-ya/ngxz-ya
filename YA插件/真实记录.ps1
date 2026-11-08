@@ -29,7 +29,34 @@ function Assert-YaMeasurements($Measurements) {
     $seen[[string]$item.name]=$true
   }
 }
+function Assert-YaPowerShellFile([string]$Path){
+  $bytes=[IO.File]::ReadAllBytes($Path)
+  $bom=$bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191
+  if(-not $bom -and @($bytes|Where-Object {$_ -ge 128}).Count){throw ('SCRIPT_ENCODING: non-ASCII PowerShell requires UTF-8 BOM; preserve and correct '+$Path)}
+  $tokens=$null;$errors=$null
+  [Management.Automation.Language.Parser]::ParseFile($Path,[ref]$tokens,[ref]$errors)|Out-Null
+  if($errors.Count){throw ('SCRIPT_SYNTAX: '+$Path+'; '+$errors[0].Message)}
+}
 function Assert-YaOperation([string]$Package) {
+  $quickRef=Join-Path (Get-YaPackageHudHome $Package) 'quick_request.json'
+  if(Test-Path -LiteralPath $quickRef){
+    $reference=Get-Content -LiteralPath $quickRef -Raw -Encoding UTF8|ConvertFrom-Json
+    $quickRoot=Join-Path (Get-YaPackageHudHome $Package) 'quick'
+    if(-not [IO.Path]::GetFullPath([string]$reference.state_file).StartsWith(($quickRoot+'\'),[StringComparison]::OrdinalIgnoreCase)){throw 'RECOVERY_REQUIRED: quick state path is outside this package'}
+    $quick=Get-Content -LiteralPath $reference.state_file -Raw -Encoding UTF8|ConvertFrom-Json
+    if(-not $reference.request -or $quick.request -cne $reference.request){throw 'RECOVERY_REQUIRED: quick request identity is inconsistent'}
+    $dispatched=$quick.dispatched
+    $progressFile=Join-Path (Split-Path $reference.state_file -Parent) 'progress.json'
+    if(Test-Path -LiteralPath $progressFile){$progress=Get-Content -LiteralPath $progressFile -Raw -Encoding UTF8|ConvertFrom-Json;if($progress.request -cne $quick.request){throw 'RECOVERY_REQUIRED: quick progress mismatch'};if($progress.stage -in @('launch','startup','window','probe','proof','registration')){$dispatched=$true}}
+    if($quick.status -eq 'completed'){
+      if($null -eq $quick.exit_code -or $quick.exit_code -ne 0 -or $quick.error -or @($quick.receipts).Count -lt 2){throw 'RECOVERY_REQUIRED: quick completion lacks valid execution receipts'}
+      foreach($receipt in $quick.receipts){if(-not [IO.File]::Exists($receipt.path) -or (Get-FileHash -LiteralPath $receipt.path).Hash -cne $receipt.sha256){throw 'RECOVERY_REQUIRED: quick completion receipt changed'}}
+    }
+    if($quick.status -ne 'completed' -and -not ($quick.status -eq 'failed' -and $dispatched -eq $false)){
+      $owner=Get-Process -Id $quick.owner_pid -ErrorAction SilentlyContinue
+      if($quick.status -cne 'pending' -or $env:YALINK_QUICK_WORKER -cne $quick.request -or -not $owner -or $owner.StartTime.ToUniversalTime().Ticks.ToString() -cne $quick.owner_start){throw 'RECOVERY_REQUIRED: connection attempt pending/blocked; preserve software and quick request evidence; do not relaunch'}
+    }
+  }
   $operationPath=Join-Path (Get-YaPackageHudHome $Package) 'operation.json'
   $op=$null
   if(Test-Path -LiteralPath $operationPath){$op=Get-Content -LiteralPath $operationPath -Raw -Encoding UTF8|ConvertFrom-Json}

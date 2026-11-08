@@ -24,8 +24,10 @@ function Invoke-YaNativeProcess {
   }finally{$child.Dispose()}
 }
 function Write-YaReadback {
-  param([Parameter(Mandatory=$true)]$Context,[Parameter(Mandatory=$true)][object[]]$Measurements,[Parameter(Mandatory=$true)][string[]]$Artifacts)
+  param([Parameter(Mandatory=$true)]$Context,[Parameter(Mandatory=$true)][object[]]$Measurements,[Parameter(Mandatory=$true)][string[]]$Artifacts,[string]$Source,[int]$ReaderPid,[string]$ModelSha256)
   $plain=@($Measurements|ForEach-Object {[pscustomobject]@{name=[string]$_.name;value=$_.value}})
   Assert-YaMeasurements $plain
-  Write-YaAtomic (Join-Path $Context.directory 'Verify.json') @{request=$Context.request;nonce=$Context.nonce;software_version=$Context.software_version;status='READBACK';measurements=$plain;artifacts=@($Artifacts)}
+  $reply=@{request=$Context.request;nonce=$Context.nonce;software_version=$Context.software_version;status='READBACK';measurements=$plain;artifacts=@($Artifacts)}
+  if($Source){$reply.source=$Source;$reply.reader_pid=$ReaderPid;$reply.model_sha256=$ModelSha256}
+  Write-YaAtomic (Join-Path $Context.directory 'Verify.json') $reply
 }

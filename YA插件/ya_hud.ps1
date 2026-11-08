@@ -959,6 +959,11 @@ public class YaCard : Window {
     linkReason = "";
     var d = LinkRead(); linkSoft = d == null ? "" : Str(d, "soft"); string sl = d == null ? "" : Str(d, "slot").Trim().ToLowerInvariant(); linkSlot = (sl == "" || sl == "all") ? "generic" : sl;
     linkSlotBound = d != null && Str(d, "package_id") == YaEvidence.Identity(System.IO.Path.GetDirectoryName(libDir));
+    string home = Directory.GetParent(ioDir).FullName, quickFile = System.IO.Path.Combine(home,"quick_request.json");
+    if(File.Exists(quickFile)) { var reference = ReadJson(quickFile); string stateFile = Str(reference,"state_file"), quickState = "";
+      try { if(System.IO.Path.GetFullPath(stateFile).StartsWith(System.IO.Path.Combine(home,"quick")+"\\",StringComparison.OrdinalIgnoreCase)) quickState=Str(ReadJson(stateFile),"status"); } catch { }
+      if(quickState!="completed" && quickState!="failed") { linkState="recovery";linkReason="连接请求尚未完成，保留现场核查";linkLast=false;return false; }
+    }
     if (d == null || Str(d, "state") != "ok") { linkState = d != null && Str(d, "state") == "opened" ? "evidence" : "none"; linkLast = false; return false; }
     double rawPid = Num(d, "pid"); int p = 0; if (rawPid > 0 && rawPid <= 2147483647d && rawPid == Math.Floor(rawPid)) p = (int)rawPid;
     if (p > 0) {
@@ -974,6 +979,7 @@ public class YaCard : Window {
   }
   string LinkText() {
     string n = linkSoft == "" ? "" : linkSoft + " ";
+    if (linkState == "recovery") return "连接待复核";
     if (linkState == "ok") return "\u8FDE\u63A5\u6210\u529F" + (linkSoft == "" ? "" : " \u00B7 " + linkSoft);
     if (linkState == "evidence") return n + "已打开 · 待读回";
     if (linkState == "lost") return n + "\u5DF2\u6389\u7EBF";

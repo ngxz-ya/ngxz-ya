@@ -11,7 +11,9 @@ try{
  $operation=Join-Path (Get-YaPackageHudHome $pkg) 'operation.json'
  if($Action -eq 'Diagnose'){
   $state=if(Test-Path -LiteralPath $operation){Get-Content -LiteralPath $operation -Raw -Encoding UTF8|ConvertFrom-Json}else{$null}
-  @{status='DIAGNOSTIC';software=$Software;operation=$state;file=$operation;next='保留日志和成果，检查是否迟到执行；不要清状态重发'}|ConvertTo-Json -Depth 10;exit 0
+  $quick=$null;$ref=Join-Path (Get-YaPackageHudHome $pkg) 'quick_request.json'
+  if(Test-Path -LiteralPath $ref){$q=Get-Content -LiteralPath $ref -Raw -Encoding UTF8|ConvertFrom-Json;$quick=Get-Content -LiteralPath $q.state_file -Raw -Encoding UTF8|ConvertFrom-Json}
+  @{status='DIAGNOSTIC';software=$Software;operation=$state;quick_connection=$quick;file=$operation;next='保留日志和成果，检查是否迟到执行；不要清状态重发'}|ConvertTo-Json -Depth 15;exit 0
  }
  Assert-YaOperation $pkg
  $output=@(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '连接教练\连接经验\经验分存.ps1') ensure ('soft='+$Software))
@@ -42,5 +44,5 @@ try{
  if($LASTEXITCODE){throw 'EXPERIENCE_SEARCH_FAILED'}
  $method=Join-Path $pkg ('连接教练\连接经验\'+$slot+'\方法.json')
  $hasMethod=Test-Path -LiteralPath $method
- @{status=$(if($hasMethod){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'});software=$Software;slot=$slot;installation_candidates=$candidates;method=$method;connected=$false;live_link=$false;connection_acceptance='Connect -TaskFile <本次任务JSON>';next=@('先读本机连接卡和已有经验，核对软件版本与条件','缺方法时由Agent查合法官方接口或开源方案；记录来源、许可与安全审查','按适配器/说明.md创建本机方法与非破坏性任务；不得由Agent编造软件成功回执','前台连接验收用 -Action Connect -TaskFile；只做后台任务才用 Run；失败保留证据','图形软件支持时打开其可见窗口与本次成果；窗口展示和实时连接单独核验');token='未统计（除非另接真实用量源）';savings='待对照'}|ConvertTo-Json -Depth 8
+ @{status=$(if($hasMethod){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'});software=$Software;slot=$slot;installation_candidates=$candidates;method=$method;connected=$false;live_link=$false;connection_acceptance='Connect -TaskFile <本次任务JSON>';next=@('先读本机连接卡和已有经验，核对软件版本与条件','缺方法时由Agent查合法官方接口或开源方案；记录来源、许可与安全审查','先读连接教练/通用接入指南.md，再用适配器/准备接入.ps1生成规范文件；草稿不代表已连接','前台连接验收用 -Action Connect -TaskFile；只做后台任务才用 Run；失败保留证据','图形软件支持时打开其可见窗口与本次成果；窗口展示和实时连接单独核验');token='未统计（除非另接真实用量源）';savings='待对照'}|ConvertTo-Json -Depth 8
 }catch{@{status='FAIL';error=$_.Exception.Message}|ConvertTo-Json;exit 1}

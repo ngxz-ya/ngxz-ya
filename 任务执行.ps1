@@ -53,6 +53,8 @@ try{
  $driver=Join-Path (Split-Path $methodFile -Parent) $method.driver
  $driverHash=(Get-FileHash -LiteralPath $driver).Hash
  if($driverHash -cne $method.driver_sha256){throw 'METHOD_CHANGED: review changed code before running'}
+ Assert-YaPowerShellFile $driver
+ if($method.mode -eq 'interactive' -and $method.frontend.reader -match '^[A-Za-z0-9_-]+\.ps1$'){Assert-YaPowerShellFile (Join-Path (Split-Path $methodFile -Parent) $method.frontend.reader)}
  if($RequireInteractive -and ($method.mode -cne 'interactive' -or -not $method.frontend -or -not (CurrentLiveLink))){throw 'INTERACTIVE_CONNECTION_REQUIRED: Connect needs a reviewed frontend method and a live GUI session; batch execution is not connection acceptance'}
  if($method.mode -eq 'interactive' -and $method.frontend){
   $io=Join-Path (Get-YaPackageHudHome $pkg) 'io';$link=[YaEvidence]::Read((Join-Path $io 'link.json'))
@@ -92,6 +94,12 @@ try{
  Write-YaAtomic $operation @{status='pending';request=$RequestId;nonce=$nonce;owner_pid=$PID;owner_start=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString();time=[DateTime]::UtcNow.ToString('o')}
  $owns=$true
  $runtimeGuard.ReleaseMutex();$runtimeHeld=$false
+ $draftPath=Join-Path (Split-Path $methodFile -Parent) '方法.草稿.json'
+ if(Test-Path -LiteralPath $draftPath){
+  $draft=Get-Content -LiteralPath $draftPath -Raw -Encoding UTF8|ConvertFrom-Json
+  $preparation=Get-Content -LiteralPath (Join-Path $pkg '经验库\流程.json') -Raw -Encoding UTF8|ConvertFrom-Json
+  if($draft.preparation_task -and $preparation.current.id -ceq $draft.preparation_task -and $preparation.current.tag -ceq 'connection_preparation' -and $preparation.current.slot -ceq $Slot -and $preparation.current.status -in @('进行中','自检通过')){$null=Runtime @('step_hand','note=连接准备资料保留，转入正式任务；准备阶段不计工程验收成功')}
+ }
  $null=Runtime @('task_open',('slot='+$Slot),('tag='+$RequestId),('title='+$plan.title))
  $flowId=(Get-Content -LiteralPath (Join-Path $pkg '经验库\流程.json') -Raw -Encoding UTF8|ConvertFrom-Json).current.id
  $null=Runtime @('exp_recall',('slot='+$Slot),('task='+$flowId),('q='+$plan.title))

@@ -30,7 +30,7 @@ try {
   if(-not [IO.File]::Exists($model) -or (Get-FileHash -LiteralPath $model).Hash -cne $executed.saved_sha256){throw 'SAVED_MODEL_MISSING_OR_CHANGED'}
   # The independent reader receives the actual saved file, never expected measurements or task parameters.
   $inputFile=Join-Path $c.directory 'reader-input.json'
-  Write-YaAtomic $inputFile @{request=$c.request;nonce=$c.nonce;software_version=$c.software_version;directory=$c.directory;model=$model;model_sha256=$executed.saved_sha256;frontend_pid=$link['pid']}
+  Write-YaAtomic $inputFile @{request=$c.request;nonce=$c.nonce;software_version=$c.software_version;directory=$c.directory;model=$model;model_sha256=$executed.saved_sha256;frontend_pid=$link['pid'];timeout_seconds=$c.timeout_seconds}
   & powershell -NoProfile -ExecutionPolicy Bypass -File $reader -Context $inputFile
   if($LASTEXITCODE){throw 'INDEPENDENT_READER_FAILED'}
   $reply=Get-Content -LiteralPath (Join-Path $c.directory 'Verify.json') -Raw -Encoding UTF8|ConvertFrom-Json

@@ -63,6 +63,15 @@ try {
   $errRx = [string]$fast.错误标题; if (-not $errRx) { $errRx = '^(Error|错误|错误信息)' }
   $need = @($fast.读回含); if ($need.Count -eq 0) { $need = @('SESSION_OK') }
   $wait = 100; if ((A 'wait') -match '^\d+$') { $wait = [int](A 'wait') } elseif ([string]$fast.等待秒 -match '^\d+$') { $wait = [int]$fast.等待秒 }
+  if($wait -lt 1 -or $wait -gt 1800){throw 'wait must be between 1 and 1800 seconds'}
+  . (Join-Path $pkg 'YA插件\连接上下文.ps1')
+  . (Join-Path $pkg 'YA插件\真实记录.ps1')
+  . (Join-Path $pkg '适配器\受控连接.ps1')
+  Assert-YaPowerShellFile $adapter
+  if(A '_worker'){Initialize-YaQuickWorker (A '_worker')}else{
+    $workerExit=Invoke-YaQuickWorker -Script $PSCommandPath -Arguments $Rest -WaitSeconds $wait
+    exit $workerExit
+  }
   Write-Output ('card: ' + $card.id + ' v=' + $card.v + ' slot=' + $slot + ' soft=' + $soft)
 
   # 卡命中计数（包外）
@@ -100,7 +109,7 @@ try {
   # 参数：卡里「参数」默认值，被命令行 键=值 覆盖
   $params = @{}
   if ($card.参数) { foreach ($p in $card.参数.PSObject.Properties) { $params[$p.Name] = ([string]$p.Value -split '（')[0].Trim() } }
-  foreach ($k in $a.Keys) { if ($k -notin @('slot','card','wait','log','agent','existing')) { $params[$k] = $a[$k] } }
+  foreach ($k in $a.Keys) { if ($k -notin @('slot','card','wait','log','agent','existing','_worker')) { $params[$k] = $a[$k] } }
 
   Add-Type -Namespace YaFast -Name W -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);' -ErrorAction SilentlyContinue
 
@@ -117,6 +126,7 @@ try {
 
   # 适配准备及实时 Probe（不自动生成软件成功证据）
   $stage = '适配准备'
+  Set-YaQuickStage 'adapter' $work
   $nonce = [guid]::NewGuid().ToString('N')
   $aout = @(& $adapter -Work $work -Nonce $nonce -Params $params)
   $aout | Where-Object { $_ -isnot [hashtable] } | ForEach-Object { Write-Output ('  ' + $_) }
@@ -129,12 +139,14 @@ try {
 
   # 脱离 Agent 启动：WMI Win32_Process.Create，父进程不是 Agent 的命令，命令结束软件不会被带走
   $stage = 'WMI 启动'
+  Set-YaQuickStage 'launch' $work
   $cim = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = [string]$prep.CommandLine; CurrentDirectory = [string]$prep.CurrentDirectory }
   if ([int]$cim.ReturnValue -ne 0) { throw ('WMI 启动失败 ReturnValue=' + $cim.ReturnValue) }
   Mark 'WMI 已发起启动'
 
   # 等新进程 + 读回本次随机数
   $stage = '等读回'
+  Set-YaQuickStage 'startup' $work
   $deadline = (Get-Date).AddSeconds($wait); $ok = $false; $seenProc = $false; $txt = ''
   while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 1000
@@ -155,6 +167,7 @@ try {
 
   # 等主窗口可见且标题对上，再确认进程没中途退出
   $stage = '等主窗口'
+  Set-YaQuickStage 'window' $work $newPid
   $deadline = (Get-Date).AddSeconds([Math]::Max(30, $wait)); $proc = $null; $windowReady = $false
   while ((Get-Date) -lt $deadline) {
     $proc = Get-Process -Id $newPid -ErrorAction SilentlyContinue
@@ -167,7 +180,7 @@ try {
   if (-not $windowReady) { throw 'WINDOW_NOT_READY: 等待超时，未确认目标窗口可见、响应且标题匹配；保留进程，不登记。' }
   Start-Sleep -Seconds 3
   if (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) { throw ('进程 ' + $newPid + ' 出窗后退出了') }
-  Mark ('主窗口可见「' + $proc.MainWindowTitle + '」')
+  Mark ('主窗口可见「' + [YaWindow]::Title([YaWindow]::Find($newPid)) + '」')
 
   # 新鲜挑战必须由仍运行的软件通道回应；不把旧启动文本包装成成功 JSON。
   $stage = '软件挑战读回'
@@ -179,7 +192,9 @@ try {
   if ([string]$challenge['session'] -cnotmatch '^[a-f0-9]{32}$' -or $challenge['package_id'] -cne [YaEvidence]::Identity($pkg) -or $challenge['slot'] -cne $slot -or [string]$challenge['pid'] -cne [string]$newPid -or $challenge['process_start'] -cne $proc.StartTime.ToUniversalTime().Ticks.ToString() -or [DateTime]::Parse([string]$challenge['issued_utc']).ToUniversalTime() -lt $prepareStarted) { throw '本次挑战身份或时间不匹配，禁止借用旧文件' }
   $challengePath = Join-Path ([YaEvidence]::Work($pkg,$slot)) ($challenge['session']+'\challenge.json')
   if (-not (Test-Path -LiteralPath $challengePath)) { throw '本次挑战文件缺失' }
+  Set-YaQuickStage 'probe' $work $newPid
   & $prep.Probe $challengePath | Out-Null
+  Set-YaQuickStage 'proof' $work $newPid
   $proofFile = Join-Path (Split-Path $challengePath -Parent) 'readback.json'
   $proofDeadline = (Get-Date).AddSeconds([Math]::Max(30, $wait))
   while (-not (Test-Path -LiteralPath $proofFile) -and (Get-Date) -lt $proofDeadline) { Start-Sleep -Milliseconds 400 }
@@ -187,13 +202,16 @@ try {
 
   # 前台 + 登记 + 再拉回前台复核：经 WMI 在使用者桌面上跑（Agent 自己的会话可能拿不到前台）。不按键、不点鼠标。
   $stage = '前台与登记'
+  Set-YaQuickStage 'registration' $work $newPid
   $fgOut = Join-Path $work '_ya_fg_link.out.txt'
   if (Test-Path -LiteralPath $fgOut) { Remove-Item -LiteralPath $fgOut -Force }
   $helper = Join-Path $work '_ya_fg_link.ps1'
   $linkPs = Join-Path $pkg 'YA插件\ya_link.ps1'
   $h = @'
-param([int]$TargetPid, [string]$LinkPs, [string]$Soft, [string]$Slot, [string]$Log, [string]$Agent, [int]$AgentPid, [string]$Out, [string]$CommandWork)
+param([int]$TargetPid, [string]$LinkPs, [string]$Soft, [string]$Slot, [string]$Log, [string]$Agent, [int]$AgentPid, [string]$Out, [string]$CommandWork,[string]$QuickWorkerRequest)
 $ErrorActionPreference = 'Continue'
+if($QuickWorkerRequest){if($QuickWorkerRequest -cnotmatch '^[a-f0-9]{32}$'){throw 'INVALID_QUICK_WORKER_REQUEST'};$env:YALINK_QUICK_WORKER=$QuickWorkerRequest}
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
 Add-Type -Namespace YaFg -Name U -MemberDefinition @"
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
@@ -236,6 +254,7 @@ $r.alive = [bool]$pr
   [IO.File]::WriteAllText($helper, $h, (New-Object Text.UTF8Encoding $true))
   $q = { param($s) "'" + ([string]$s).Replace("'", "''") + "'" }
   $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& ' + (& $q $helper) + ' -TargetPid ' + $newPid + ' -LinkPs ' + (& $q $linkPs) + ' -Soft ' + (& $q $soft) + ' -Slot ' + (& $q $slot) + ' -Log ' + (& $q $log) + ' -Agent ' + (& $q $agent) + ' -AgentPid ' + $agentPid + ' -CommandWork ' + (& $q $work) + ' -Out ' + (& $q $fgOut) + '"'
+  if($env:YALINK_QUICK_WORKER){$cmd=$cmd.Substring(0,$cmd.Length-1)+' -QuickWorkerRequest '+(& $q $env:YALINK_QUICK_WORKER)+'"'}
   $cim2 = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd; CurrentDirectory = $pkg }
   if ([int]$cim2.ReturnValue -ne 0) { throw ('WMI 跑前台/登记助手失败 ReturnValue=' + $cim2.ReturnValue) }
   $deadline = (Get-Date).AddSeconds(45)
