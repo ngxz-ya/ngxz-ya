@@ -978,7 +978,7 @@ public class YaCard : Window {
     if (p > 0) {
       try { var pr = Process.GetProcessById(p); if (pr.HasExited) { linkState = "lost"; linkLast = false; return false; }
         bool resp = false; try { resp = pr.Responding; } catch { } if (!resp) { linkState = "hang"; linkLast = false; return false; }
-        IntPtr mw = IntPtr.Zero; try { mw = pr.MainWindowHandle; } catch { } if (mw == IntPtr.Zero || !YaWinVisible(mw)) { linkState = "hidden"; linkLast = false; return false; } }
+        IntPtr mw = IntPtr.Zero; try { mw = YaWindow.Find(pr.Id); } catch { } if (mw == IntPtr.Zero) { linkState = "hidden"; linkLast = false; return false; } }
       catch { linkState = "lost"; linkLast = false; return false; }
     }
     else { linkState = "nopid"; linkLast = false; return false; }
@@ -1554,7 +1554,7 @@ public class YaCard : Window {
     return b.ToString();
   }
   void ShowActualEvents() {
-    int calls=0, verified=0, reused=0; double measuredSeconds=0, retrievalSeconds=0;
+    int calls=0, verified=0, reused=0; double measuredSeconds=0, retrievalSeconds=0, commandSeconds=0;
     var current=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));
     string task=Str(current,"id"), slot=TaskSlot();
     int common=CommonCount(), software=SoftwareCount(slot);
@@ -1570,6 +1570,7 @@ public class YaCard : Window {
         }
         continue;
       }
+      if(Str(ev,"kind")=="command_result") { var commandData=ev["data"] as Dictionary<string,object>; if(task!="" && Str(commandData,"task")==task) commandSeconds+=Num(commandData,"elapsed_ms")/1000.0; continue; }
       if(Str(ev,"kind")!="runtime") continue;
       var d=ev["data"] as Dictionary<string,object>; if(d==null || Num(d,"exit_code")!=0) continue;
       var t=Has(d,"task") ? d["task"] as Dictionary<string,object> : null;
@@ -1581,7 +1582,7 @@ public class YaCard : Window {
     vLib.Text=verified.ToString(IC); uLib.Text="条";
     if(verified>0) { string val,unit; Dur(measuredSeconds,out val,out unit); vTime.Text=val;uTime.Text=unit; }
     else { vTime.Text="未统计";uTime.Text=""; }
-    tTime.ToolTip="软件执行及独立验证："+measuredSeconds.ToString("0.###",IC)+" 秒；检索/调取："+retrievalSeconds.ToString("0.###",IC)+" 秒。来源为持久化事件。";
+    tTime.ToolTip="前台命令等待（未等同工程验收）："+commandSeconds.ToString("0.###",IC)+" 秒；软件执行及独立验证："+measuredSeconds.ToString("0.###",IC)+" 秒；检索/调取："+retrievalSeconds.ToString("0.###",IC)+" 秒。来源为持久化事件。";
 
     tLib.ToolTip="适配器回报不等于独立工程验收；点击查看原始事件。";
     if(current!=null) dSub.Text="自检 "+taskPass+"/"+taskTotal+" · "+Str(current,"status");
@@ -1590,7 +1591,7 @@ public class YaCard : Window {
       view["rendered_utc"]=DateTime.UtcNow.ToString("o");view["task_id"]=task;
       view["token_text"]=vTokn.Text;view["savings_text"]=vTok.Text;
       view["library_text"]=vAll.Text;view["common_entries"]=common;view["software_entries"]=software;view["task_percent"]=taskPct;view["task_status"]=Str(current,"status");view["retrieval_calls"]=calls;view["verified_new"]=verified;view["successful_reuses"]=reused;
-      view["task_text"]=dSub.Text;view["software_status"]=LinkText();view["measured_seconds"]=measuredSeconds;view["retrieval_seconds"]=retrievalSeconds;
+      view["task_text"]=dSub.Text;view["software_status"]=LinkText();view["command_seconds"]=commandSeconds;view["measured_seconds"]=measuredSeconds;view["retrieval_seconds"]=retrievalSeconds;
       File.WriteAllText(System.IO.Path.Combine(ioDir,"hud_view.json"),js.Serialize(view),new UTF8Encoding(false));
     } catch { }
     if(totWin!=null) FillActualTotals();

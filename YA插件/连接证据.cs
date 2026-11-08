@@ -58,3 +58,39 @@ public static class YaEvidence {
     } catch { return "missing-or-invalid-evidence"; }
   }
 }
+
+// Read-only discovery within this logon session; desktop access denial is not success.
+public static class YaWindow {
+  delegate bool EnumProc(System.IntPtr window, System.IntPtr param);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, System.IntPtr param);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool EnumDesktopWindows(System.IntPtr desktop, EnumProc callback, System.IntPtr param);
+  [System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)] static extern System.IntPtr OpenDesktop(string name, uint flags, bool inherit, uint access);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool CloseDesktop(System.IntPtr desktop);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(System.IntPtr window, out uint pid);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsWindowVisible(System.IntPtr window);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr window);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsHungAppWindow(System.IntPtr window);
+  [System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)] static extern int GetWindowText(System.IntPtr window, System.Text.StringBuilder text, int count);
+  static string RawTitle(System.IntPtr window) { var text=new System.Text.StringBuilder(2048); GetWindowText(window,text,text.Capacity); return text.ToString(); }
+  sealed class Info { public System.IntPtr Handle; public string Text=""; public bool Ready; }
+  static Info Inspect(int pid, System.IntPtr target) {
+    try {
+      if (pid>0 && System.Diagnostics.Process.GetProcessById(pid).SessionId != System.Diagnostics.Process.GetCurrentProcess().SessionId) return new Info();
+      Info found=new Info();
+      EnumProc callback=delegate(System.IntPtr window,System.IntPtr unused) {
+        uint owner; GetWindowThreadProcessId(window,out owner);
+        string title=RawTitle(window); if ((target!=System.IntPtr.Zero ? window==target : owner==(uint)pid) && IsWindowVisible(window) && title.Length>0) { found.Handle=window; found.Text=title; found.Ready=!IsIconic(window) && !IsHungAppWindow(window); return false; }
+        return true;
+      };
+      EnumWindows(callback,System.IntPtr.Zero);
+      if (found.Handle!=System.IntPtr.Zero) return found;
+      System.IntPtr desktop=OpenDesktop("Default",0,false,0x0041); // READOBJECTS | ENUMERATE
+      if (desktop==System.IntPtr.Zero) return found;
+      try { EnumDesktopWindows(desktop,callback,System.IntPtr.Zero); } finally { CloseDesktop(desktop); }
+      return found;
+    } catch { return new Info(); }
+  }
+  public static System.IntPtr Find(int pid) { return Inspect(pid,System.IntPtr.Zero).Handle; }
+  public static string Title(System.IntPtr window) { return window==System.IntPtr.Zero ? "" : Inspect(0,window).Text; }
+  public static bool Ready(int pid) { return Inspect(pid,System.IntPtr.Zero).Ready; }
+}

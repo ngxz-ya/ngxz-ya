@@ -5,7 +5,7 @@
 # 状态卡按包路径和 HUD Home 互斥去重，不终止其它进程。
 #   powershell -NoProfile -ExecutionPolicy Bypass -File ".\YA插件\ya_link.ps1" off=1      标成未连接
 # pid 必填，且该进程主窗口必须前台可见；后台进程、隐藏窗口、批处理/命令行无界面运行都会 RESULT: FAIL。
-# TOKEN：读 log= 或环境变量 YALINK_USAGE_LOG 指向的 Agent 输出日志（Grok streaming-json / Codex / tokens used）。没有就显示「— · 未挂日志」。
+# TOKEN：log= 仅记录来源指针；真实统计需按说明显式运行采集真实用量.ps1，没有有效用量显示「未统计」。
 # 只写本包隔离的 %LOCALAPPDATA%\YAHud\instances\<包标识>\io\link.json（或环境变量 YALINK_HUD_HOME），不改安装目录、不碰软件。
 # 连接钩子（2026-11-05 掌门定规，所有软件同一套）：登记成功前自动确保这款软件的专属经验夹存在（连接教练\连接经验\经验分存.ps1 ensure）：
 #   经验库\槽\<槽>\（招式库/坑库/零件方案库/_草稿/索引.json）+ 连接教练\连接经验\<槽>\。证据协议必填 slot=；不再落到 generic。正式包、测试包都自动建，人不手建。
@@ -87,9 +87,9 @@ try {
   $softPid = [int]$pidText
   try { $proc = Get-Process -Id $softPid -ErrorAction Stop } catch { throw ('进程 ' + $softPid + ' 不在，不能标连接成功。') }
   if (-not ('YaHudLink.Win' -as [type])) { Add-Type -Namespace YaHudLink -Name Win -MemberDefinition '[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h); [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);' }
-  $mw = $proc.MainWindowHandle
-  if ($mw -eq [IntPtr]::Zero -or -not [YaHudLink.Win]::IsWindowVisible($mw)) { throw ('进程 ' + $softPid + ' 主窗口不可见（后台/批处理/还没出界面）。软件前台窗口可见才算连接成功。') }
-  $resp = $false; try { $resp = $proc.Responding } catch { }
+  $mw = [YaWindow]::Find($softPid)
+  if ($mw -eq [IntPtr]::Zero -or -not [YaWindow]::Ready($softPid)) { throw ('进程 ' + $softPid + ' 主窗口不可见（后台/批处理/还没出界面）。软件前台窗口可见才算连接成功。') }
+  $resp = $false; try { $resp = [YaWindow]::Ready($softPid) } catch { }
   if (-not $resp) { throw ('进程 ' + $softPid + ' 主窗口未响应，不能标连接成功。') }
 
   $slotId = (A 'slot').ToLowerInvariant()
@@ -158,7 +158,7 @@ try {
       $dDir = Join-Path $connSlotDir '_草稿'
       if (-not (Test-Path -LiteralPath $dDir)) { New-Item -ItemType Directory -Path $dDir -Force | Out-Null }
       $exe = ''; try { $exe = [string]$proc.Path } catch { }
-      $rec = [ordered]@{ evidence_session=$proof['session']; readback_sha256=$proof['readback_sha256']; 适用前提='待补版本、合法通道及环境'; 参数='待补';  类型 = '首连记录'; v = 0; 状态 = '草稿：待 Agent 补连法后 add 成连接卡'; soft = $soft; slot = $slotId; time = (Get-Date).ToString('s'); 进程名 = [string]$proc.ProcessName; 程序路径 = $exe; 窗口标题 = [string]$proc.MainWindowTitle; agent = (A 'agent'); 来源 = 'ya_link.ps1 首连即存（本机本人，开源包不带）'; 待补 = '连法步骤（合法开源/官方接口）、读回方式、核验办法' }
+      $rec = [ordered]@{ evidence_session=$proof['session']; readback_sha256=$proof['readback_sha256']; 适用前提='待补版本、合法通道及环境'; 参数='待补';  类型 = '首连记录'; v = 0; 状态 = '草稿：待 Agent 补连法后 add 成连接卡'; soft = $soft; slot = $slotId; time = (Get-Date).ToString('s'); 进程名 = [string]$proc.ProcessName; 程序路径 = $exe; 窗口标题 = [YaWindow]::Title($mw); agent = (A 'agent'); 来源 = 'ya_link.ps1 首连即存（本机本人，开源包不带）'; 待补 = '连法步骤（合法开源/官方接口）、读回方式、核验办法' }
       $rf = Join-Path $dDir ('首连记录-' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.json')
       [IO.File]::WriteAllText($rf, ($rec | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding $false))
       $firstNote = '首连记录已存 ' + $rf.Substring($pkg.Length + 1) + '；请把刚走通的连法写成卡：连接经验.ps1 add slot=' + $slotId + ' file=卡.json'
@@ -216,7 +216,7 @@ try {
       soft      = $soft
       slot      = $resolved.id
       pid       = $softPid
-      window    = [string]$proc.MainWindowTitle
+      window    = [YaWindow]::Title($mw)
       agent     = $agent
       agent_pid = $agentPid
       log       = $log
@@ -230,7 +230,7 @@ try {
   Write-Output ('exp_folder: ' + $expDirLine)
   Write-Output ('soft_pid: ' + $softPid)
   Write-Output ('agent: ' + $agent + ' pid=' + $agentPid)
-  Write-Output ('usage_log: ' + $(if ($log) { $log + '  来源=' + $logFrom } else { '(没挂，卡上 TOKEN 显示「未挂日志」；经 WMI 转调要传 log=)' }))
+  Write-Output ('usage_log: ' + $(if ($log) { $log + '  来源=' + $logFrom } else { '(未统计；需按说明接入真实用量采集器)' }))
   Write-Output 'single_card: 按包路径和 HUD Home 互斥去重'
   Write-Output ('package: ' + $pkg + ' [' + $packageId + ']')
   Write-Output ('link: ' + $linkPath)

@@ -81,9 +81,7 @@ try {
     if ($id -and $Soft) {
       foreach ($s in $slots) {
         if ([string]$s.id -eq $id -and ([string]$s.title).Trim().ToLowerInvariant() -ne $Soft.Trim().ToLowerInvariant()) {
-          $why = 'slot=' + (Show-Slot $id) + ' 已是另一款软件的专属槽，改按软件名定槽'
-          $id = ''
-          break
+          throw ('SLOT_NAME_CONFLICT: 指定槽已有软件名称；请使用槽中登记的名称，核对别名后再连接。没有创建其他槽。')
         }
       }
     }

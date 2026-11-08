@@ -85,6 +85,15 @@ try {
   Write-Output ('agent: ' + $(if ($agent) { $agent } else { '未知' }) + ' pid=' + $agentPid + '  usage_log: ' + $(if ($log) { $log } else { '(没挂)' }))
 
   . (Join-Path $pkg 'YA插件\连接上下文.ps1')
+  $existingIo=Join-Path (Get-YaPackageHudHome $pkg) 'io'
+  $registered=$null
+  try { $registered=[YaEvidence]::Read((Join-Path $existingIo 'link.json')) } catch { }
+  if ($registered -and $registered['slot'] -ceq $slot -and -not [YaEvidence]::CheckRegistered($pkg,$existingIo,$registered) -and [YaWindow]::Ready([int]$registered['pid'])) {
+    Write-Output ('state: 已有本包登记会话，保持当前进程 pid=' + $registered['pid'])
+    Write-Output 'next: 在当前任务通过发命令继续操作；本次未重新启动或重新测量软件。'
+    Write-Output 'RESULT: ALREADY_REGISTERED'
+    exit 0
+  }
   $work = Join-Path ([YaEvidence]::Work($pkg, $slot)) ([guid]::NewGuid().ToString('N'))
   if (-not (Test-Path -LiteralPath $work)) { New-Item -ItemType Directory -Path $work -Force | Out-Null }
 
@@ -99,7 +108,7 @@ try {
   $stage = '查已开会话'
   $before = @{}
   if ($procName) { foreach ($p in @(Get-Process -Name $procName -ErrorAction SilentlyContinue)) { $before[[int]$p.Id] = $true } }
-  $vis = @(Get-Process -Name $procName -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and [YaFast.W]::IsWindowVisible($_.MainWindowHandle) })
+  $vis = @(Get-Process -Name $procName -ErrorAction SilentlyContinue | Where-Object { [YaWindow]::Find($_.Id) -ne [IntPtr]::Zero })
   if ($vis.Count -gt 0 -and (A 'existing') -ne 'new') {
     Write-Output ('busy: 已有 ' + $soft + ' 窗口开着 pid=' + (($vis | ForEach-Object { $_.Id }) -join ',') + '。快通道只连新起的会话：不重启、不杀这个会话。要连它请按卡里「已开会话」办法或举手；确认可以另起一个就加 existing=new。')
     Write-Output 'RESULT: BUSY'
@@ -132,7 +141,7 @@ try {
     $new = @(Get-Process -Name $procName -ErrorAction SilentlyContinue | Where-Object { -not $before.ContainsKey([int]$_.Id) })
     if ($new.Count -gt 0 -and -not $seenProc) { $seenProc = $true; $newPid = [int]$new[0].Id; Mark ('新进程出现 pid=' + $newPid) }
     $errWin = ''
-    foreach ($p in $new) { $tt = ''; try { $p.Refresh(); $tt = [string]$p.MainWindowTitle } catch { }; if ($tt -match $errRx) { $newPid = [int]$p.Id; $errWin = $tt } }
+    foreach ($p in $new) { $tt = ''; try { $p.Refresh(); $tt = [YaWindow]::Title([YaWindow]::Find($p.Id)) } catch { }; if ($tt -match $errRx) { $newPid = [int]$p.Id; $errWin = $tt } }
     if ($errWin) { throw ('软件弹错误窗「' + $errWin + '」pid=' + $newPid + '：按卡「失败处理」查（中文路径/许可/库没加载）。不按键，本次新进程号由人决定关不关。') }
     if ($rb -and (Test-Path -LiteralPath $rb)) {
       try { $txt = [IO.File]::ReadAllText($rb, [Text.Encoding]::UTF8) } catch { $txt = '' }
@@ -146,15 +155,16 @@ try {
 
   # 等主窗口可见且标题对上，再确认进程没中途退出
   $stage = '等主窗口'
-  $deadline = (Get-Date).AddSeconds([Math]::Max(30, $wait)); $proc = $null
+  $deadline = (Get-Date).AddSeconds([Math]::Max(30, $wait)); $proc = $null; $windowReady = $false
   while ((Get-Date) -lt $deadline) {
     $proc = Get-Process -Id $newPid -ErrorAction SilentlyContinue
     if (-not $proc) { throw ('进程 ' + $newPid + ' 读回后退出了：多半随 Agent 命令被带走或加载失败，看卡「失败处理」。') }
     $proc.Refresh()
-    if ($proc.MainWindowTitle -match $errRx) { throw ('软件弹错误窗「' + $proc.MainWindowTitle + '」pid=' + $newPid) }
-    if ($proc.MainWindowHandle -ne [IntPtr]::Zero -and [YaFast.W]::IsWindowVisible($proc.MainWindowHandle) -and $proc.MainWindowTitle -match $titleRx) { break }
+    if ([YaWindow]::Title([YaWindow]::Find($newPid)) -match $errRx) { throw ('软件弹错误窗「' + $proc.MainWindowTitle + '」pid=' + $newPid) }
+    if ([YaWindow]::Ready($newPid) -and [YaWindow]::Title([YaWindow]::Find($newPid)) -match $titleRx) { $windowReady = $true; break }
     Start-Sleep -Milliseconds 800
   }
+  if (-not $windowReady) { throw 'WINDOW_NOT_READY: 等待超时，未确认目标窗口可见、响应且标题匹配；保留进程，不登记。' }
   Start-Sleep -Seconds 3
   if (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) { throw ('进程 ' + $newPid + ' 出窗后退出了') }
   Mark ('主窗口可见「' + $proc.MainWindowTitle + '」')
@@ -206,7 +216,7 @@ $r = [ordered]@{}
 $r.fg_before = Front $TargetPid
 $args2 = @(('soft=' + $Soft), ('pid=' + $TargetPid), ('slot=' + $Slot), ('command_work=' + $CommandWork), ('agent=' + $Agent), ('agent_pid=' + $AgentPid))
 if ($Log) { $args2 += ('log=' + $Log) }
-$r.link = (& $LinkPs @args2 2>&1 | Out-String)
+$r.link = (& powershell -NoProfile -ExecutionPolicy Bypass -File $LinkPs @args2 2>&1 | Out-String)
 Start-Sleep -Milliseconds 2500
 $r.fg_after_link = FgPid
 $r.fg_final = Front $TargetPid
