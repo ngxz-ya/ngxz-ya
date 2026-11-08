@@ -1,10 +1,11 @@
-﻿param([Parameter(Mandatory=$true)][string]$Software,[string]$Workspace,[switch]$NoPanel)
+﻿param([Parameter(Mandatory=$true)][string]$Software,[string]$Workspace,[switch]$NoPanel,[switch]$Fresh)
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSEdition -ne 'Desktop'){throw '请使用 Windows PowerShell 5.1'}
 if(-not $Workspace){$Workspace=Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'ngxz-ya'}
 $Workspace=[IO.Path]::GetFullPath($Workspace).TrimEnd('\')
 $source=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
 if($Workspace -eq $source -or $Workspace.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase)){throw '部署位置不能是源码或源码子目录'}
+if($Fresh -and (Test-Path -LiteralPath $Workspace)){throw 'FRESH_WORKSPACE_REQUIRED: 干净测试必须使用不存在的新工作区；不清空、不覆盖已有目录。'}
 $runtime=Join-Path $Workspace '工作区'
 $identity=[Security.Cryptography.SHA256]::Create()
 try{$key=[BitConverter]::ToString($identity.ComputeHash([Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant()))).Replace('-','')}finally{$identity.Dispose()}
