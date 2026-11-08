@@ -74,7 +74,13 @@ operation_request.json保留当前执行对应的原始request.json引用；原�
 
 本地驱动和 JSON 不是恶意代码隔离环境。分别启动执行/读取进程能分离任务阶段，不能密码学证明任意驱动诚实；必须审查驱动、查看软件原始输出与成果，不能编造测量。
 
+连接请求的最终验收用 `连接软件.ps1 -Action Connect -TaskFile 本次任务.json`；该入口强制要求已核验的 interactive 前台通道，执行实际任务并独立回读，再确认 YA 用户桌面可见。batch 在派发前直接拒绝，不能把 Run 的后台通过当作 Connect 成功。Connect 不带 TaskFile 仍仅作环境和方法研究。保留 Run 处理明确的后台任务。
+
 ## 面板和用量
+
+面板交付统一运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\YA插件\show_ya.ps1`，或双击打开YA插件.bat；启动入口和 ya_link 也调用它。它将本包面板启动到 WinSta0\Default，用新请求号、实际PID/启动时间、窗口句柄和输入桌面上的可见性确认交付。不得直接在 Agent 的隔离桌面运行 ya_hud.ps1 -Show 后，仅凭进程或 hud_view.json 更新就报告可见。显示入口返回非零时，报告 YA 未交付；不重做机械软件操作、不自动结束已有实例。旧面板占用同一包时，保留记录并请用户通过原面板正常退出，不按名称强杀。首次显示默认置顶，已有用户设置继续保留。
+
+驱动执行原生软件时优先复用适配器/运行工具.ps1，保留实际退出码及分开的原始输出。使用 Write-YaReadback 输出普通测量数组；不得将 value/Count 包装对象冒充规定的 measurements。恢复校验会拒绝只有 completed 字样、缺少完整回执、成果已变或仍有 failure.json 的原请求。解决了驱动问题，也不能把失败任务改成已成功。
 
 保留现有 YA 面板，显示持久化事件、经验与任务。没有真实来源就“未统计”。面板不展示节省量或无来源费用；历史账本字段保留，未经同任务同验收公平 A/B 不得宣称节省。额度百分比、字符数、请求次数不是 Token。用量绑定真实 session/task/source；不偷读别的会话或上传用户对话。用量采集支持 Codex、Antigravity CLI 终态导出及通用 UsageJsonl；按 YA插件/说明.md 显式选择来源格式并校验会话。客户端不提供 usage 时如实未统计，不能保证任意 Agent 自动获得消耗。
 

@@ -38,24 +38,12 @@ try {
 
   function Show-YaHud {
     if (Test-Path -LiteralPath (Join-Path $hudHome 'hud.off')) {
-      Write-Output 'hud: 有 hud.off，不弹窗'
+      Write-Host 'hud: 有 hud.off，未交付面板';return $false
     } else {
-      $ready = $null
-      try {
-        if (-not (Test-Path -LiteralPath $hud)) { throw '本包缺少面板脚本' }
-        if ((Get-Process -Id $PID).SessionId -ne $proc.SessionId) { throw '登记程序与软件不在同一桌面会话' }
-        $readyName = (Get-YaHudInstanceName $PSScriptRoot $hudHome) + '-Show-Visible'
-        $ready = New-Object Threading.EventWaitHandle($false, [Threading.EventResetMode]::AutoReset, $readyName)
-        [void]$ready.Reset()
-        $argList = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $hud + '"'), '-Show', '-Home2', ('"' + $hudHome + '"'))
-        Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -WindowStyle Hidden
-        if (-not $ready.WaitOne(8000)) { throw '8 秒内未收到窗口显示确认' }
-        Write-Output 'hud: 本包 YA 面板已显示'
-      } catch {
-        Write-Output ('hud: 未确认面板显示 · ' + $_.Exception.Message + '。可从本包双击打开YA插件.bat；无需重新连接。')
-      } finally {
-        if ($ready) { $ready.Dispose() }
-      }
+      $output=@(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'show_ya.ps1') -WithSoftware)
+      $code=$LASTEXITCODE
+      $output|ForEach-Object {Write-Host ('hud: '+$_)}
+      return ($code -eq 0)
     }
   }
 
@@ -223,7 +211,8 @@ try {
       time      = (Get-Date).ToString('s')
     })
 
-  Show-YaHud
+  $hudShown=Show-YaHud
+  if(-not $hudShown){Write-Output 'state: 软件通道已核验，YA前台交付未完成；修复显示后无需重新操作软件';Write-Output 'RESULT: FAIL';exit 1}
   Write-Output ('state: 连接成功 · ' + $soft)
   Write-Output ('soft_window: ' + $proc.MainWindowTitle)
   Write-Output ('slot: ' + $resolved.id + $(if ($slotNote) { '  （' + $slotNote + '）' } else { '' }))

@@ -26,27 +26,6 @@ $Home2 = Get-YaPackageHudHome (Split-Path $dir -Parent) $Home2
 if (-not (Test-Path -LiteralPath $Home2)) { New-Item -ItemType Directory -Path $Home2 -Force | Out-Null }
 
 # 包路径 + HUD Home 定义实例；预览独立，不终止其它进程。
-$mutexName = Get-YaHudInstanceName $dir $Home2
-if ($Preview) { $mutexName += '-Preview' }
-$showEventName = $mutexName + '-Show'
-if ($Show) { try { $ev = [Threading.EventWaitHandle]::OpenExisting($showEventName); [void]$ev.Set(); $ev.Dispose(); exit 0 } catch { } }
-
-$NxPid = $PID   # 统计会话锚在本窗口进程上；软件进程只用来判断连接态
-
-if (-not $NxPid) { exit 2 }
-
-if (-not $Show -and (Test-Path -LiteralPath (Join-Path $Home2 'hud.off'))) { exit 0 }
-
-$created = $false
-
-
-
-$mutex = New-Object Threading.Mutex($true, $mutexName, [ref]$created)
-
-if (-not $created) { exit 0 }
-
-try { [void](Get-Process -Id $NxPid -ErrorAction Stop) } catch { exit 0 }
-
 $lib = Join-Path (Split-Path $dir -Parent) '经验库'
 Write-Output ('package: ' + (Split-Path $dir -Parent) + ' io=' + $Home2)
 
@@ -385,7 +364,7 @@ public class YaCard : Window {
 
     // position: last place, else near the top right of the work area
 
-    double x = double.NaN, y = double.NaN; bool top = false;
+    double x = double.NaN, y = double.NaN; bool top = true;
 
     try { var a = File.ReadAllText(posPath).Trim().Split(','); x = double.Parse(a[0], IC); y = double.Parse(a[1], IC); if (a.Length > 2) top = a[2] == "1"; if (a.Length < 4) { x += 18; y += 14; } } catch { }
 
@@ -496,10 +475,17 @@ public class YaCard : Window {
   }
 
   void ConfirmShown() {
-    if (!IsVisible || WindowState == WindowState.Minimized) return;
+    var handle=new WindowInteropHelper(this).Handle;
+    if (previewMode || !IsVisible || WindowState == WindowState.Minimized || !YaWindow.InputVisible(nxPid,handle.ToInt64())) return;
+    var request=YaEvidence.Read(System.IO.Path.Combine(ioDir,"hud_show_request.json"));
+    string package=System.IO.Directory.GetParent(libDir).FullName;
+    if(Convert.ToString(request["package_id"])!=YaEvidence.Identity(package) || !System.Text.RegularExpressions.Regex.IsMatch(Convert.ToString(request["request"]),"^[a-f0-9]{32}$") || (DateTime.UtcNow-DateTime.Parse(Convert.ToString(request["issued_utc"]),IC,System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime()).TotalSeconds>60)return;
+    var record=new Dictionary<string,object>{{"request",request["request"]},{"package_id",request["package_id"]},{"pid",nxPid},{"process_start",nx.StartTime.ToUniversalTime().Ticks.ToString()},{"handle",handle.ToInt64()},{"desktop",YaWindow.Desktop()},{"verified_utc",DateTime.UtcNow.ToString("o")}};
+    string path=System.IO.Path.Combine(ioDir,"hud_window.json"),temp=path+"."+Guid.NewGuid().ToString("N")+".tmp";
+    try{File.WriteAllText(temp,js.Serialize(record),new UTF8Encoding(false));if(File.Exists(path))File.Replace(temp,path,null);else File.Move(temp,path);}finally{if(File.Exists(temp))File.Delete(temp);}
     try { using (var ready = EventWaitHandle.OpenExisting(ShowEventName + "-Visible")) ready.Set(); } catch (WaitHandleCannotBeOpenedException) { }
   }
-  void ShowCard() { if (!IsVisible) Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; var t = Topmost; Topmost = true; Topmost = t; Safe(Fit); Safe(Poll); Safe(ConfirmShown); }
+  void ShowCard() { if (!IsVisible) Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; var t = Topmost; Topmost = false; Topmost = true; Topmost = t; Safe(Fit); Safe(Poll); Safe(ConfirmShown); }
 
   void HideCard() {
 
@@ -2117,6 +2103,29 @@ public class YaCard : Window {
 
 '@
 Add-Type -ReferencedAssemblies $refs -TypeDefinition ($hudSource + [IO.File]::ReadAllText((Join-Path $dir '连接证据.cs'), [Text.Encoding]::UTF8))
+if([YaWindow]::Desktop() -cne 'WinSta0\Default'){throw 'HUD_INTERACTIVE_DESKTOP_REQUIRED: use show_ya.ps1 or 打开YA插件.bat; a background desktop is not user-visible'}
+$mutexName = Get-YaHudInstanceName $dir $Home2
+if ($Preview) { $mutexName += '-Preview' }
+$showEventName = $mutexName + '-Show'
+if ($Show) { try { $ev = [Threading.EventWaitHandle]::OpenExisting($showEventName); [void]$ev.Set(); $ev.Dispose(); exit 0 } catch { } }
+
+$NxPid = $PID   # 统计会话锚在本窗口进程上；软件进程只用来判断连接态
+
+if (-not $NxPid) { exit 2 }
+
+if (-not $Show -and (Test-Path -LiteralPath (Join-Path $Home2 'hud.off'))) { exit 0 }
+
+$created = $false
+
+
+
+$mutex = New-Object Threading.Mutex($true, $mutexName, [ref]$created)
+
+if (-not $created) { exit 0 }
+
+try { [void](Get-Process -Id $NxPid -ErrorAction Stop) } catch { exit 0 }
+
+
 
 [YaCard]::ShowEventName = $showEventName
 $w = New-Object YaCard($NxPid, $io, $lib, $StatusFile, $AgentFile, $StatsFile, $IndexFile, [bool]$Preview)

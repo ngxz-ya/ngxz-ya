@@ -68,7 +68,8 @@ try{
  [IO.Directory]::CreateDirectory((Join-Path $Workspace '成果'))|Out-Null
  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '安装卸载\安装.ps1') -PackageOnly
  if($LASTEXITCODE){throw '安装失败，保留工作区'}
- if(-not $NoPanel){Start-Process powershell -WindowStyle Hidden -ArgumentList ('-NoProfile -STA -ExecutionPolicy Bypass -File "'+(Join-Path $runtime 'YA插件\ya_hud.ps1')+'" -Show')|Out-Null}
+ $panelExit=0
+ if(-not $NoPanel){& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime 'YA插件\show_ya.ps1');$panelExit=$LASTEXITCODE}
  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '连接软件.ps1') -Software $Software -Action Check
- exit $LASTEXITCODE
+ if($LASTEXITCODE){exit $LASTEXITCODE};exit $panelExit
 }finally{if($held){$lock.ReleaseMutex()};$lock.Dispose()}

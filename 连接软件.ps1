@@ -18,10 +18,19 @@ try{
  if($LASTEXITCODE){throw ($output -join "`n")}
  $slot=([regex]::Match(($output -join "`n"),'(?m)^slot:\s*(\S+)')).Groups[1].Value
  if(-not $slot){throw 'SLOT_CREATION_FAILED'}
- if($Action -eq 'Run'){
+ if($Action -eq 'Run' -or ($Action -eq 'Connect' -and $TaskFile)){
   if(-not $TaskFile){throw 'INPUT: Run 需要 Agent 编写的 TaskFile，先读 适配器/说明.md'}
-  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '任务执行.ps1') -Software $Software -Slot $slot -TaskFile $TaskFile -RequestId $RequestId -TimeoutSeconds $TimeoutSeconds
-  exit $LASTEXITCODE
+  $invokeArgs=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $pkg '任务执行.ps1'),'-Software',$Software,'-Slot',$slot,'-TaskFile',$TaskFile,'-RequestId',$RequestId,'-TimeoutSeconds',[string]$TimeoutSeconds)
+  if($Action -eq 'Connect'){$invokeArgs+='-RequireInteractive'}
+  & powershell @invokeArgs
+  $taskExit=$LASTEXITCODE
+  if($taskExit -or $Action -eq 'Run'){exit $taskExit}
+  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg 'YA插件\show_ya.ps1') -WithSoftware
+  if($LASTEXITCODE){exit $LASTEXITCODE}
+  $io=Join-Path (Get-YaPackageHudHome $pkg) 'io';$link=[YaEvidence]::Read((Join-Path $io 'link.json'))
+  if($link['slot'] -cne $slot -or [YaEvidence]::CheckCommandChannel($pkg,$io,$link)){throw 'FRONTEND_SESSION_LOST: task passed but current connection is not confirmed'}
+  @{status='CONNECTED_INTERACTIVE';software=$Software;request=$RequestId;live_link=$true;frontend_pid=$link['pid'];process_start=$link['process_start'];hud_visible=$true}|ConvertTo-Json
+  exit 0
  }
  $candidates=@()
  foreach($key in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*')){
@@ -33,5 +42,5 @@ try{
  if($LASTEXITCODE){throw 'EXPERIENCE_SEARCH_FAILED'}
  $method=Join-Path $pkg ('连接教练\连接经验\'+$slot+'\方法.json')
  $hasMethod=Test-Path -LiteralPath $method
- @{status=$(if($hasMethod){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'});software=$Software;slot=$slot;installation_candidates=$candidates;method=$method;connected=$false;live_link=$false;next=@('先读本机连接卡和已有经验，核对软件版本与条件','缺方法时由Agent查合法官方接口或开源方案；记录来源、许可与安全审查','按适配器/说明.md创建本机方法与非破坏性任务；不得由Agent编造软件成功回执','用 -Action Run -TaskFile 执行并独立读取验证；失败保留证据并人工接管','图形软件支持时打开其可见窗口与本次成果；窗口展示和实时连接单独核验');token='未统计（除非另接真实用量源）';savings='待对照'}|ConvertTo-Json -Depth 8
+ @{status=$(if($hasMethod){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'});software=$Software;slot=$slot;installation_candidates=$candidates;method=$method;connected=$false;live_link=$false;connection_acceptance='Connect -TaskFile <本次任务JSON>';next=@('先读本机连接卡和已有经验，核对软件版本与条件','缺方法时由Agent查合法官方接口或开源方案；记录来源、许可与安全审查','按适配器/说明.md创建本机方法与非破坏性任务；不得由Agent编造软件成功回执','前台连接验收用 -Action Connect -TaskFile；只做后台任务才用 Run；失败保留证据','图形软件支持时打开其可见窗口与本次成果；窗口展示和实时连接单独核验');token='未统计（除非另接真实用量源）';savings='待对照'}|ConvertTo-Json -Depth 8
 }catch{@{status='FAIL';error=$_.Exception.Message}|ConvertTo-Json;exit 1}

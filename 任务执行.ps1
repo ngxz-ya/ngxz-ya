@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$Software,[Parameter(Mandatory=$true)][string]$Slot,[Parameter(Mandatory=$true)][string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120)
+﻿param([Parameter(Mandatory=$true)][string]$Software,[Parameter(Mandatory=$true)][string]$Slot,[Parameter(Mandatory=$true)][string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120,[switch]$RequireInteractive)
 $ErrorActionPreference='Stop'
 $pkg=$PSScriptRoot
 . (Join-Path $pkg 'YA插件\连接上下文.ps1')
@@ -53,6 +53,7 @@ try{
  $driver=Join-Path (Split-Path $methodFile -Parent) $method.driver
  $driverHash=(Get-FileHash -LiteralPath $driver).Hash
  if($driverHash -cne $method.driver_sha256){throw 'METHOD_CHANGED: review changed code before running'}
+ if($RequireInteractive -and ($method.mode -cne 'interactive' -or -not $method.frontend -or -not (CurrentLiveLink))){throw 'INTERACTIVE_CONNECTION_REQUIRED: Connect needs a reviewed frontend method and a live GUI session; batch execution is not connection acceptance'}
  if($method.mode -eq 'interactive' -and $method.frontend){
   $io=Join-Path (Get-YaPackageHudHome $pkg) 'io';$link=[YaEvidence]::Read((Join-Path $io 'link.json'))
   if($link['slot'] -cne $Slot -or [YaEvidence]::CheckCommandChannel($pkg,$io,$link)){throw 'FRONTEND_SESSION_REQUIRED'}
@@ -65,6 +66,7 @@ try{
    $previous=Get-Content -LiteralPath $sessionRef -Raw -Encoding UTF8|ConvertFrom-Json
    $previousState=Get-Content -LiteralPath $previous.state_file -Raw -Encoding UTF8|ConvertFrom-Json
    if(-not $previous.request -or $previousState.request -cne $previous.request -or $previousState.status -ne 'completed'){throw 'RECOVERY_REQUIRED: this frontend process has an incomplete task in another workspace; preserve its evidence'}
+   Assert-YaCompletedRequest $previous.state_file
   }elseif($abandoned){throw 'RECOVERY_REQUIRED: previous frontend owner ended unexpectedly'}
  }
  $held=$guard.WaitOne(0);if(-not $held){throw 'BUSY: another software task owns this workspace'}
@@ -78,6 +80,8 @@ try{
   $old=Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8|ConvertFrom-Json
   if($old.plan_hash -cne $planHash -or $old.driver_hash -cne $driverHash -or $old.method_hash -cne $methodHash){throw 'REQUEST_CONFLICT'}
   if($old.status -ne 'completed'){throw 'RECOVERY_REQUIRED: existing incomplete request'}
+  Assert-YaCompletedRequest $stateFile
+  if($RequireInteractive){$binding=Get-Content -LiteralPath (Join-Path $job 'frontend-session.json') -Raw -Encoding UTF8|ConvertFrom-Json;$active=[YaEvidence]::Read((Join-Path (Join-Path (Get-YaPackageHudHome $pkg) 'io') 'link.json'));if([string]$binding.pid -cne [string]$active['pid'] -or $binding.process_start -cne $active['process_start']){throw 'CACHED_FRONTEND_SESSION_CHANGED: use a new verified task for the current software process'}}
   foreach($artifact in $old.artifacts){if(-not [IO.File]::Exists($artifact.path) -or (Get-FileHash -LiteralPath $artifact.path).Hash -cne $artifact.sha256){throw 'EVIDENCE_CHANGED'}}
   @{status=$(if($old.mode -eq 'simulation'){'SIMULATED'}elseif($old.mode -eq 'batch'){'VERIFIED_BATCH'}else{'VERIFIED_EXECUTION'});cached=$true;request=$RequestId;mode=$old.mode;live_link=(CurrentLiveLink)}|ConvertTo-Json;exit 0
  }
@@ -108,7 +112,9 @@ try{
  $check=Worker 'Check';if($check.status -ne 'READY'){throw 'SOFTWARE_NOT_READY'}
  Write-YaAtomic $stateFile @{status='dispatched';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash}
  $executed=Worker 'Execute'
+ if($executed.status -cne 'EXECUTED'){throw 'EXECUTION_RECEIPT_SCHEMA: Execute must return status=EXECUTED'}
  $verified=Worker 'Verify'
+ Assert-YaMeasurements $verified.measurements
  if($verified.status -ne 'READBACK' -or @($verified.measurements).Count -eq 0){throw 'INDEPENDENT_READBACK_MISSING'}
  $proof=@()
  foreach($expected in $plan.expected){
@@ -150,7 +156,8 @@ try{
  Write-YaAtomic (Join-Path (Split-Path $methodFile -Parent) '连接验证.json') @{software=$Software;version=$method.software_version;driver_hash=$driverHash;mode=$method.mode;verified=($method.mode -ne 'simulation');request=$RequestId;evidence=$job;time=[DateTime]::UtcNow.ToString('o');live_link=(CurrentLiveLink)}
  foreach($name in @('search','compare','draft','claim','inspect')){$null=Runtime @('step_check',('item='+$name),'pass=1','note=本次软件独立回读与执行前验收值比较通过')}
  $null=Runtime @('step_finish');$null=Runtime @('step_accept','note=工具验收通过；不替代生产工程审查')
- Write-YaAtomic $stateFile @{status='completed';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash;experience=$saved.id;artifacts=$artifacts;mode=$method.mode;used_experiences=$used}
+ $receipts=@('task.json','Check.json','Execute.json','Verify.json')|ForEach-Object {@{file=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $job $_)).Hash}}
+ Write-YaAtomic $stateFile @{status='completed';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash;experience=$saved.id;artifacts=$artifacts;mode=$method.mode;used_experiences=$used;receipts=@($receipts)}
  Write-YaAtomic $operation @{status='completed';request=$RequestId;time=[DateTime]::UtcNow.ToString('o')}
  @{status=$(if($method.mode -eq 'simulation'){'SIMULATED'}elseif($method.mode -eq 'batch'){'VERIFIED_BATCH'}else{'VERIFIED_EXECUTION'});request=$RequestId;experience=$saved.id;mode=$method.mode;live_link=(CurrentLiveLink);token='未统计（除非另接真实用量源）';savings='待对照';evidence=$job}|ConvertTo-Json -Depth 8
 }catch{

@@ -157,6 +157,55 @@ public static class YaEvidence {
 
 // Read-only discovery within this logon session; desktop access denial is not success.
 public static class YaWindow {
+  [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern System.IntPtr GetThreadDesktop(uint id);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern System.IntPtr GetProcessWindowStation();
+  [System.Runtime.InteropServices.DllImport("user32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode)] static extern bool GetUserObjectInformation(System.IntPtr h,int index,System.Text.StringBuilder text,int size,out uint needed);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern System.IntPtr OpenInputDesktop(uint flags,bool inherit,uint access);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(System.IntPtr h,out Rect rect);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern System.IntPtr WindowFromPoint(Point point);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+  [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(System.IntPtr h,int attribute,out int value,int size);
+  [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct Rect {public int Left,Top,Right,Bottom;}
+  [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct Point {public int X,Y;}
+  static string ObjectName(System.IntPtr h){uint needed;var text=new System.Text.StringBuilder(256);return GetUserObjectInformation(h,2,text,512,out needed)?text.ToString():"UNKNOWN";}
+  public static string Desktop(){return ObjectName(GetProcessWindowStation())+"\\"+ObjectName(GetThreadDesktop(GetCurrentThreadId()));}
+  public static string Quote(string value){var b=new System.Text.StringBuilder("\"");int slashes=0;foreach(char c in value){if(c=='\\'){slashes++;continue;}b.Append('\\',c=='"'?slashes*2+1:slashes);b.Append(c);slashes=0;}return b.Append('\\',slashes*2).Append('"').ToString();}
+  [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential,CharSet=System.Runtime.InteropServices.CharSet.Unicode)] struct Startup {public int cb;public string reserved,desktop,title;public int x,y,w,h,xc,yc,fill,flags;public short show,extra;public System.IntPtr data,input,output,error;}
+  [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct ProcessInfo {public System.IntPtr process,thread;public int pid,tid;}
+  [System.Runtime.InteropServices.DllImport("kernel32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode,SetLastError=true)] static extern bool CreateProcess(string exe,System.Text.StringBuilder args,System.IntPtr pa,System.IntPtr ta,bool inherit,uint flags,System.IntPtr env,string directory,ref Startup startup,out ProcessInfo info);
+  [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool CloseHandle(System.IntPtr h);
+  public static int LaunchInteractive(string exe,string[] args,string directory){
+    var startup=new Startup();startup.cb=System.Runtime.InteropServices.Marshal.SizeOf(startup);startup.desktop="winsta0\\default";
+    var line=new System.Text.StringBuilder(Quote(exe));foreach(string arg in args)line.Append(' ').Append(Quote(arg));
+    ProcessInfo info;if(!CreateProcess(exe,line,System.IntPtr.Zero,System.IntPtr.Zero,false,0x08000000,System.IntPtr.Zero,directory,ref startup,out info))throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(),"INTERACTIVE_DESKTOP_START_FAILED");
+    CloseHandle(info.thread);CloseHandle(info.process);return info.pid;
+  }
+  public static bool InputVisible(int pid,long handle){
+    if(Desktop()!="WinSta0\\Default")return false;
+    var desktop=OpenInputDesktop(0,false,0x41);if(desktop==System.IntPtr.Zero)return false;bool visible=false;
+    try{
+      EnumProc cb=delegate(System.IntPtr window,System.IntPtr unused){uint owner;GetWindowThreadProcessId(window,out owner);if(window.ToInt64()!=handle || owner!=(uint)pid)return true;
+        int cloaked;Rect r;if(!IsWindowVisible(window)||IsIconic(window)||IsHungAppWindow(window)||DwmGetWindowAttribute(window,14,out cloaked,4)!=0||cloaked!=0||!GetWindowRect(window,out r))return false;
+        int left=System.Math.Max(r.Left,GetSystemMetrics(76)),top=System.Math.Max(r.Top,GetSystemMetrics(77)),right=System.Math.Min(r.Right,GetSystemMetrics(76)+GetSystemMetrics(78)),bottom=System.Math.Min(r.Bottom,GetSystemMetrics(77)+GetSystemMetrics(79));
+        if(right-left<24||bottom-top<24)return false;
+        foreach(int y in new int[]{top+12,(top+bottom)/2,bottom-12}){uint at;GetWindowThreadProcessId(WindowFromPoint(new Point{X=(left+right)/2,Y=y}),out at);if(at==(uint)pid){visible=true;break;}}
+        return false;};
+      EnumDesktopWindows(desktop,cb,System.IntPtr.Zero);return visible;
+    }finally{CloseDesktop(desktop);}
+  }
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern System.IntPtr GetForegroundWindow();
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetForegroundWindow(System.IntPtr h);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool BringWindowToTop(System.IntPtr h);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool ShowWindow(System.IntPtr h,int command);
+  [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool AttachThreadInput(uint a,uint b,bool attach);
+  public static bool Front(int pid){
+    if(Desktop()!="WinSta0\\Default")return false;var window=Find(pid);if(window==System.IntPtr.Zero)return false;
+    if(IsIconic(window))ShowWindow(window,9);
+    uint owner,thread=GetWindowThreadProcessId(GetForegroundWindow(),out owner),mine=GetCurrentThreadId();bool attached=thread!=0&&thread!=mine&&AttachThreadInput(mine,thread,true);
+    try{BringWindowToTop(window);SetForegroundWindow(window);}finally{if(attached)AttachThreadInput(mine,thread,false);}
+    System.Threading.Thread.Sleep(200);return InputVisible(pid,window.ToInt64());
+  }
   delegate bool EnumProc(System.IntPtr window, System.IntPtr param);
   [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, System.IntPtr param);
   [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool EnumDesktopWindows(System.IntPtr desktop, EnumProc callback, System.IntPtr param);

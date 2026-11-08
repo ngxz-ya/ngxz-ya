@@ -1,4 +1,34 @@
 ﻿# 本包事件账本；独立事件原子发布，不把命中当复用。
+function Assert-YaCompletedRequest([string]$StateFile) {
+  try {
+    $state=Get-Content -LiteralPath $StateFile -Raw -Encoding UTF8|ConvertFrom-Json
+    $job=Split-Path ([IO.Path]::GetFullPath($StateFile)) -Parent
+    if($state.status -cne 'completed' -or $state.request -cnotmatch '^[a-f0-9]{32}$' -or (Split-Path $job -Leaf) -cne $state.request -or $state.mode -notin @('batch','interactive','simulation') -or -not $state.experience -or @($state.artifacts).Count -lt 1 -or (Test-Path -LiteralPath (Join-Path $job 'failure.json'))){throw 'completion record is missing or conflicts with a failure'}
+    $context=Get-Content -LiteralPath (Join-Path $job 'task.json') -Raw -Encoding UTF8|ConvertFrom-Json
+    if($context.request -cne $state.request -or $context.driver_sha256 -cne $state.driver_hash){throw 'task identity does not match completion'}
+    foreach($phase in @('Check','Execute','Verify')){
+      $reply=Get-Content -LiteralPath (Join-Path $job ($phase+'.json')) -Raw -Encoding UTF8|ConvertFrom-Json
+      $required=@{Check='READY';Execute='EXECUTED';Verify='READBACK'}[$phase]
+      if($reply.status -cne $required -or $reply.request -cne $context.request -or $reply.nonce -cne $context.nonce -or $reply.software_version -cne $context.software_version){throw ('missing or inconsistent '+$phase+' receipt')}
+      if($phase -eq 'Verify'){Assert-YaMeasurements $reply.measurements}
+    }
+    foreach($artifact in $state.artifacts){
+      if(-not $artifact.path -or $artifact.sha256 -cnotmatch '^[A-F0-9]{64}$' -or -not [IO.Path]::GetFullPath($artifact.path).StartsWith($job+'\',[StringComparison]::OrdinalIgnoreCase) -or -not [IO.File]::Exists($artifact.path) -or (Get-FileHash -LiteralPath $artifact.path).Hash -cne $artifact.sha256){throw 'saved evidence is missing or changed'}
+    }
+    foreach($receipt in @($state.receipts)){
+      if(-not $receipt){continue}
+      if($receipt.file -cnotin @('task.json','Check.json','Execute.json','Verify.json') -or (Get-FileHash -LiteralPath (Join-Path $job $receipt.file)).Hash -cne $receipt.sha256){throw 'receipt bytes changed after completion'}
+    }
+  } catch { throw ('RECOVERY_REQUIRED: completed status is not sufficient; '+$_.Exception.Message) }
+}
+function Assert-YaMeasurements($Measurements) {
+  if($Measurements -isnot [Array] -or $Measurements.Count -lt 1){throw 'READBACK_SCHEMA: measurements must be a JSON array of {name,value}, not a value/Count wrapper; use Write-YaReadback'}
+  $seen=@{}
+  foreach($item in $Measurements){
+    if(-not $item.name -or $null -eq $item.value -or $seen.ContainsKey([string]$item.name) -or $item.value -is [pscustomobject] -or ($item.value -is [Collections.IEnumerable] -and $item.value -isnot [string])){throw 'READBACK_SCHEMA: each measurement needs a unique name and scalar value'}
+    $seen[[string]$item.name]=$true
+  }
+}
 function Assert-YaOperation([string]$Package) {
   $operationPath=Join-Path (Get-YaPackageHudHome $Package) 'operation.json'
   $op=$null
@@ -12,6 +42,7 @@ function Assert-YaOperation([string]$Package) {
     $ref=Get-Content -LiteralPath $guard -Raw -Encoding UTF8|ConvertFrom-Json
     $state=Get-Content -LiteralPath $ref.state_file -Raw -Encoding UTF8|ConvertFrom-Json
     if(-not $ref.request -or $state.request -cne $ref.request -or $state.status -ne 'completed'){throw 'RECOVERY_REQUIRED: original request is incomplete; editing operation.json cannot resolve it.'}
+    Assert-YaCompletedRequest $ref.state_file
   }
   if(-not $op -or $op.status -eq 'completed'){return}
   throw 'RECOVERY_REQUIRED: package operation is pending/blocked; inspect operation.json and software state before any write or retry.'
