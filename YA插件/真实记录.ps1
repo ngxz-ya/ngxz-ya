@@ -1,13 +1,19 @@
 ﻿# 本包事件账本；独立事件原子发布，不把命中当复用。
 function Assert-YaOperation([string]$Package) {
   $operationPath=Join-Path (Get-YaPackageHudHome $Package) 'operation.json'
-  if(-not (Test-Path -LiteralPath $operationPath)){return}
-  $op=Get-Content -LiteralPath $operationPath -Raw -Encoding UTF8|ConvertFrom-Json
-  if($op.status -eq 'completed'){return}
+  $op=$null
+  if(Test-Path -LiteralPath $operationPath){$op=Get-Content -LiteralPath $operationPath -Raw -Encoding UTF8|ConvertFrom-Json}
   if($op.status -eq 'pending' -and $op.nonce -and $env:YALINK_OPERATION -ceq $op.nonce){
     $owner=Get-Process -Id $op.owner_pid -ErrorAction SilentlyContinue
     if($owner -and $owner.StartTime.ToUniversalTime().Ticks.ToString() -ceq $op.owner_start){return}
   }
+  $guard=Join-Path (Get-YaPackageHudHome $Package) 'operation_request.json'
+  if(Test-Path -LiteralPath $guard){
+    $ref=Get-Content -LiteralPath $guard -Raw -Encoding UTF8|ConvertFrom-Json
+    $state=Get-Content -LiteralPath $ref.state_file -Raw -Encoding UTF8|ConvertFrom-Json
+    if(-not $ref.request -or $state.request -cne $ref.request -or $state.status -ne 'completed'){throw 'RECOVERY_REQUIRED: original request is incomplete; editing operation.json cannot resolve it.'}
+  }
+  if(-not $op -or $op.status -eq 'completed'){return}
   throw 'RECOVERY_REQUIRED: package operation is pending/blocked; inspect operation.json and software state before any write or retry.'
 }
 function Write-YaAtomic([string]$Path, $Value) {

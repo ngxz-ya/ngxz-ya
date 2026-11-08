@@ -24,7 +24,7 @@ try {
   if (Test-Path -LiteralPath $actualModule) { . $actualModule }
   $io = Join-Path (Get-YaPackageHudHome $pkg) 'io'
   $link = [YaEvidence]::Read((Join-Path $io 'link.json'))
-  if ([string]$link['state'] -ne 'ok' -or [string]$link['slot'] -ne $slot -or [YaEvidence]::CheckRegistered($pkg, $io, $link)) { throw '本包会话证据缺失或过期；先重新挑战、读回并登记。' }
+  if ([string]$link['state'] -ne 'ok' -or [string]$link['slot'] -ne $slot -or [YaEvidence]::CheckCommandChannel($pkg, $io, $link)) { throw '本包会话证据缺失或过期；先重新挑战、读回并登记。' }
   $work = [string]$link['command_work']
   $expected = [YaEvidence]::Work($pkg, $slot) + '\'
   if (-not $work -or -not [IO.Path]::GetFullPath($work).StartsWith($expected, [StringComparison]::OrdinalIgnoreCase)) { throw '命令工作目录不属于本包；请按连接卡复核。' }
@@ -84,7 +84,7 @@ try {
     if ($txt -notmatch '(?m)^DONE\s*$') { throw '缺少完整 DONE，执行结果未知' }
   } elseif ($txt -notmatch '(?m)^DONE(?:[^\S\r\n][^\r\n]*)?\r?$') { throw '缺少完整 DONE，执行结果未知' }
   $current=[YaEvidence]::Read((Join-Path $io 'link.json'))
-  if ($current['session'] -cne $link['session'] -or [YaEvidence]::CheckRegistered($pkg,$io,$current)) { throw '命令期间软件会话变化，保留 pending' }
+  if ($current['session'] -cne $link['session'] -or [YaEvidence]::CheckCommandChannel($pkg,$io,$current)) { throw '命令期间软件会话变化，保留 pending' }
   $ok=$txt -match '(?m)^STATUS OK[^\S\r\n]*\r?$'
   $receiptFile=Join-Path $work ($request+'.receipt.json')
   $receipt=[ordered]@{request=$request;task=$a['task'];command=$cmd;session=$link['session'];state='executed';correlated=$correlated;verification='pending';command_ok=$ok;result=$txt;elapsed_ms=((Get-Date)-$t0).TotalMilliseconds;time=[DateTime]::UtcNow.ToString('o')}
@@ -101,7 +101,7 @@ try {
       if ($record.request -cne $request) { throw '读回与本次命令不匹配' }
       if ($record.task -and $record.task -cne $a['task']) { throw '读回任务不匹配' }
       $current = [YaEvidence]::Read((Join-Path $io 'link.json'))
-      if ($current['session'] -cne $link['session'] -or [YaEvidence]::CheckRegistered($pkg, $io, $current)) { throw '连接会话已变化' }
+      if ($current['session'] -cne $link['session'] -or [YaEvidence]::CheckCommandChannel($pkg, $io, $current)) { throw '连接会话已变化' }
       $checks = @($record.checks)
       if ($checks.Count -lt 1 -or $checks.Count -gt 12) { throw '需要 1 至 12 个软件读回检查项' }
       $proof = foreach ($check in $checks) {

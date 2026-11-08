@@ -64,9 +64,10 @@ try{
   @{status=$(if($old.mode -eq 'simulation'){'SIMULATED'}elseif($old.mode -eq 'batch'){'VERIFIED_BATCH'}else{'VERIFIED_EXECUTION'});cached=$true;request=$RequestId;mode=$old.mode;live_link=$false}|ConvertTo-Json;exit 0
  }
  $nonce=[guid]::NewGuid().ToString('N');$env:YALINK_OPERATION=$nonce
+ Write-YaAtomic $stateFile @{status='prepared';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash}
+ Write-YaAtomic (Join-Path (Get-YaPackageHudHome $pkg) 'operation_request.json') @{request=$RequestId;state_file=$stateFile}
  Write-YaAtomic $operation @{status='pending';request=$RequestId;nonce=$nonce;owner_pid=$PID;owner_start=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString();time=[DateTime]::UtcNow.ToString('o')}
  $owns=$true
- Write-YaAtomic $stateFile @{status='prepared';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash}
  $runtimeGuard.ReleaseMutex();$runtimeHeld=$false
  $null=Runtime @('task_open',('slot='+$Slot),('tag='+$RequestId),('title='+$plan.title))
  $flowId=(Get-Content -LiteralPath (Join-Path $pkg '经验库\流程.json') -Raw -Encoding UTF8|ConvertFrom-Json).current.id
@@ -104,6 +105,7 @@ try{
  }
  $artifacts=@()
  foreach($file in @($verified.artifacts)){
+  if([string]::IsNullOrWhiteSpace([string]$file)){throw 'INVALID_ARTIFACT: adapter returned an empty evidence path; preserve this request and repair the driver'}
   $path=[IO.Path]::GetFullPath([string]$file)
   if(-not $path.StartsWith($job+'\',[StringComparison]::OrdinalIgnoreCase) -or -not [IO.File]::Exists($path)){throw 'EVIDENCE_OUTSIDE_CURRENT_TASK'}
   $artifacts+=@{path=$path;sha256=(Get-FileHash -LiteralPath $path).Hash}

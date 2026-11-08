@@ -24,12 +24,63 @@ public static class YaEvidence {
       return System.BitConverter.ToString(h.ComputeHash(System.IO.File.ReadAllBytes(path))).Replace("-", "");
   }
   static System.DateTime Time(string s) { return System.DateTime.Parse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime(); }
+  [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint pid);
+  // Bind the endpoint to the actual GUI process, rather than a PID copied into JSON.
+  // This is not protection against code injection or an untrusted in-process adapter.
+  static string CheckChannel(System.Collections.Generic.IDictionary<string, object> r, int pid, string start, bool registered, bool requireObjects=true) {
+    string name=S(r,"probe_pipe");
+    if (!System.Text.RegularExpressions.Regex.IsMatch(name,"^ngxz-ya-[a-f0-9]{32}$")) return "live-channel-required";
+    if (S(r,"document_id").Trim()=="" || S(r,"document_path").Trim()=="") return "active-document-required";
+    try {
+      using (var pipe=new System.IO.Pipes.NamedPipeClientStream(".",name,System.IO.Pipes.PipeDirection.InOut,System.IO.Pipes.PipeOptions.Asynchronous)) {
+        pipe.Connect(500);
+        uint owner;
+        if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle,out owner) || owner!=(uint)pid) return "wrong-channel-process";
+        // HUD liveness checks do not request software actions or wait on its UI thread.
+        if (registered) return "";
+        for (int i=0;i<2;i++) {
+          string request=System.Guid.NewGuid().ToString("N");
+          var query=new System.Collections.Generic.Dictionary<string,object>();
+          query["protocol"]="ngxz-ya/session-probe/1"; query["action"]="QUERY_SESSION"; query["request"]=request;
+          var serializer=new System.Web.Script.Serialization.JavaScriptSerializer();
+          byte[] bytes=System.Text.Encoding.UTF8.GetBytes(serializer.Serialize(query)+"\n");
+          if (!pipe.WriteAsync(bytes,0,bytes.Length).Wait(1500)) return "channel-write-timeout";
+          var data=new System.IO.MemoryStream(); var clock=System.Diagnostics.Stopwatch.StartNew(); bool done=false;
+          byte[] buffer=new byte[1];
+          while (data.Length<16384 && clock.ElapsedMilliseconds<1500) {
+            var read=pipe.ReadAsync(buffer,0,1);
+            if (!read.Wait(System.Math.Max(1,1500-(int)clock.ElapsedMilliseconds))) return "channel-read-timeout";
+            if (read.Result==0) return "channel-closed";
+            if (buffer[0]==10) { done=true; break; }
+            data.WriteByte(buffer[0]);
+          }
+          if (!done) return "invalid-channel-response";
+          var reply=serializer.Deserialize<System.Collections.Generic.Dictionary<string,object>>(System.Text.Encoding.UTF8.GetString(data.ToArray()));
+          if (S(reply,"protocol")!="ngxz-ya/session-probe/1" || S(reply,"request")!=request) return "wrong-channel-request";
+          if (S(reply,"pid")!=pid.ToString(System.Globalization.CultureInfo.InvariantCulture) || S(reply,"process_start")!=start) return "wrong-channel-identity";
+          if (S(reply,"document_id")!=S(r,"document_id") || !System.String.Equals(S(reply,"document_path"),S(r,"document_path"),System.StringComparison.OrdinalIgnoreCase)) return "wrong-active-document";
+          int count;
+          if (!int.TryParse(S(reply,"object_count"),out count) || count<(requireObjects?1:0) || S(reply,"can_execute").ToLowerInvariant()!="true") return "software-channel-not-ready";
+        }
+      }
+      return "";
+    } catch (System.TimeoutException) { return "channel-unavailable"; }
+      catch (System.UnauthorizedAccessException) { return "channel-access-denied"; }
+      catch { return "invalid-channel-evidence"; }
+  }
   public static string Check(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link) {
     return CheckCore(pkg, io, link, false);
   }
   public static string CheckRegistered(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link) {
     if (S(link, "state") != "ok") return "not-registered";
     return CheckCore(pkg, io, link, true);
+  }
+  public static string CheckCommandChannel(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link) {
+    string reason=CheckRegistered(pkg,io,link);
+    if (reason!="") return reason;
+    var r=Read(System.IO.Path.Combine(Work(pkg,S(link,"slot")),S(link,"session"),"readback.json"));
+    return CheckChannel(r,int.Parse(S(link,"pid")),S(link,"process_start"),false,false);
   }
   static string CheckCore(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link, bool registered) {
     try {
@@ -54,7 +105,7 @@ public static class YaEvidence {
       var proc = System.Diagnostics.Process.GetProcessById(int.Parse(S(c, "pid")));
       if (proc.HasExited || proc.StartTime.ToUniversalTime().Ticks.ToString() != S(c, "process_start")) return "wrong-process";
       if (S(link, "readback_sha256") != Hash(file)) return "changed-readback";
-      return "";
+      return CheckChannel(r,proc.Id,S(c,"process_start"),registered);
     } catch { return "missing-or-invalid-evidence"; }
   }
 }
