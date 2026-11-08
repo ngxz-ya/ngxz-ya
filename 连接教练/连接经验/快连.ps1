@@ -170,14 +170,20 @@ try {
   Mark ('主窗口可见「' + $proc.MainWindowTitle + '」')
 
   # 新鲜挑战必须由仍运行的软件通道回应；不把旧启动文本包装成成功 JSON。
+  $stage = '软件挑战读回'
   $linkPs = Join-Path $pkg 'YA插件\ya_link.ps1'
+  $prepareStarted = [DateTime]::UtcNow
   $prepareOut = (& powershell -NoProfile -ExecutionPolicy Bypass -File $linkPs prepare=1 ('soft=' + $soft) ('slot=' + $slot) ('pid=' + $newPid) | Out-String)
-  $challengePath = ([regex]::Match($prepareOut, '(?m)^challenge:\s*(.+)$')).Groups[1].Value.Trim()
-  if (-not $challengePath) { throw ('挑战准备失败：' + $prepareOut) }
+  if ($LASTEXITCODE -ne 2) { throw ('挑战准备失败：' + $prepareOut) }
+  $challenge = [YaEvidence]::Read((Join-Path (Join-Path (Get-YaPackageHudHome $pkg) 'io') 'challenge.json'))
+  if ([string]$challenge['session'] -cnotmatch '^[a-f0-9]{32}$' -or $challenge['package_id'] -cne [YaEvidence]::Identity($pkg) -or $challenge['slot'] -cne $slot -or [string]$challenge['pid'] -cne [string]$newPid -or $challenge['process_start'] -cne $proc.StartTime.ToUniversalTime().Ticks.ToString() -or [DateTime]::Parse([string]$challenge['issued_utc']).ToUniversalTime() -lt $prepareStarted) { throw '本次挑战身份或时间不匹配，禁止借用旧文件' }
+  $challengePath = Join-Path ([YaEvidence]::Work($pkg,$slot)) ($challenge['session']+'\challenge.json')
+  if (-not (Test-Path -LiteralPath $challengePath)) { throw '本次挑战文件缺失' }
   & $prep.Probe $challengePath | Out-Null
   $proofFile = Join-Path (Split-Path $challengePath -Parent) 'readback.json'
   $proofDeadline = (Get-Date).AddSeconds([Math]::Max(30, $wait))
   while (-not (Test-Path -LiteralPath $proofFile) -and (Get-Date) -lt $proofDeadline) { Start-Sleep -Milliseconds 400 }
+  if (-not (Test-Path -LiteralPath $proofFile)) { throw 'SOFTWARE_READBACK_MISSING: 保留本次软件进程与证据，不自动重试' }
 
   # 前台 + 登记 + 再拉回前台复核：经 WMI 在使用者桌面上跑（Agent 自己的会话可能拿不到前台）。不按键、不点鼠标。
   $stage = '前台与登记'
@@ -266,7 +272,7 @@ $r.alive = [bool]$pr
 }
 catch {
   Write-Output ('error: [' + $stage + '] ' + $_.Exception.Message)
-  if ($newPid -gt 0) { Write-Output ('note: 本次新起的进程号 ' + $newPid + '；要关只按这个进程号（Stop-Process -Id ' + $newPid + '），禁止 Stop-Process -Name 按名杀。') }
+  if ($newPid -gt 0) { Write-Output ('note: 保留本次软件进程 pid=' + $newPid + ' 和模型、日志；不要自动结束、重启或重发。确需重启先核对保存并取得用户明确同意。') }
   Write-Output ('timing: ' + (($marks.Keys | ForEach-Object { $_ + '=' + $marks[$_] + 's' }) -join ' | '))
   Write-Output 'RESULT: FAIL'
   exit 1

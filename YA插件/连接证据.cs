@@ -26,6 +26,51 @@ public static class YaEvidence {
   static System.DateTime Time(string s) { return System.DateTime.Parse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime(); }
   [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
   static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint pid);
+  // One bounded UTF-8 JSONL exchange. Never retry a software action after an unknown result.
+  public static System.Collections.Generic.Dictionary<string,object> SendMessage(string name, int pid, string start, System.Collections.Generic.Dictionary<string,object> message, int timeoutMs) {
+    if (!System.Text.RegularExpressions.Regex.IsMatch(name,"^ngxz-ya-[a-f0-9]{32}$") || timeoutMs<1 || timeoutMs>1800000)
+      throw new System.ArgumentException("INVALID_CHANNEL_ARGUMENT");
+    foreach (string key in new string[]{"protocol","action","request"}) if (S(message,key)=="") throw new System.ArgumentException("MESSAGE_FIELD_REQUIRED: "+key);
+    if (!System.Text.RegularExpressions.Regex.IsMatch(S(message,"request"),"^[a-f0-9]{32}$")) throw new System.ArgumentException("INVALID_REQUEST");
+    var proc=System.Diagnostics.Process.GetProcessById(pid);
+    if (proc.StartTime.ToUniversalTime().Ticks.ToString()!=start) throw new System.InvalidOperationException("SOFTWARE_SESSION_CHANGED");
+    var serializer=new System.Web.Script.Serialization.JavaScriptSerializer();
+    var utf8=new System.Text.UTF8Encoding(false,true);
+    byte[] bytes=utf8.GetBytes(serializer.Serialize(message)+"\n");
+    if (bytes.Length>262144) throw new System.ArgumentException("MESSAGE_TOO_LARGE");
+    var clock=System.Diagnostics.Stopwatch.StartNew();
+    using (var pipe=new System.IO.Pipes.NamedPipeClientStream(".",name,System.IO.Pipes.PipeDirection.InOut,System.IO.Pipes.PipeOptions.Asynchronous)) {
+      pipe.Connect(timeoutMs);
+      uint owner;
+      if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle,out owner) || owner!=(uint)pid) throw new System.InvalidOperationException("WRONG_CHANNEL_PROCESS");
+      int remaining=timeoutMs-(int)clock.ElapsedMilliseconds;
+      if (remaining<1 || !pipe.WriteAsync(bytes,0,bytes.Length).Wait(remaining)) throw new System.TimeoutException("CHANNEL_WRITE_UNKNOWN: do not resend");
+      using (var data=new System.IO.MemoryStream()) {
+        var buffer=new byte[4096]; bool done=false;
+        while (data.Length<262144) {
+          remaining=timeoutMs-(int)clock.ElapsedMilliseconds;
+          if (remaining<1) throw new System.TimeoutException("CHANNEL_READ_UNKNOWN: do not resend");
+          var read=pipe.ReadAsync(buffer,0,buffer.Length);
+          // Wait on this exact read until completion; no abandoned concurrent readers consuming the frame.
+          if (!read.Wait(remaining)) throw new System.TimeoutException("CHANNEL_READ_UNKNOWN: do not resend");
+          if (read.Result==0) throw new System.IO.EndOfStreamException("INCOMPLETE_CHANNEL_FRAME");
+          for (int j=0;j<read.Result;j++) {
+            if (buffer[j]==10) { done=true; break; }
+            if (data.Length>=262144) throw new System.IO.InvalidDataException("CHANNEL_FRAME_TOO_LARGE");
+            data.WriteByte(buffer[j]);
+          }
+          if (done) break;
+        }
+        if (!done) throw new System.IO.InvalidDataException("CHANNEL_FRAME_TOO_LARGE");
+        var reply=serializer.Deserialize<System.Collections.Generic.Dictionary<string,object>>(utf8.GetString(data.ToArray()));
+        foreach (string key in new string[]{"protocol","action","request"}) if (S(reply,key)!=S(message,key)) throw new System.IO.InvalidDataException("WRONG_REPLY_"+key);
+        if (message.ContainsKey("nonce") && S(reply,"nonce")!=S(message,"nonce")) throw new System.IO.InvalidDataException("WRONG_REPLY_nonce");
+        proc.Refresh();
+        if (proc.HasExited || proc.StartTime.ToUniversalTime().Ticks.ToString()!=start) throw new System.InvalidOperationException("SOFTWARE_SESSION_CHANGED");
+        return reply;
+      }
+    }
+  }
   // Bind the endpoint to the actual GUI process, rather than a PID copied into JSON.
   // This is not protection against code injection or an untrusted in-process adapter.
   static string CheckChannel(System.Collections.Generic.IDictionary<string, object> r, int pid, string start, bool registered, bool requireObjects=true) {

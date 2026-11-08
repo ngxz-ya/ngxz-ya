@@ -41,8 +41,8 @@ function Write-YaHelp {
     'skill_search q= max=       查少量通用候选方法，不执行、不提升可信状态',
     'skill_get id=              读取一张通用方法全文',
     'slot_remove id=all to=具体槽   误建的 all 有条目时先迁走。不要了用 drop=1',
-    'exp_search q= slot= tag=    先检索，要写 q= 或 tag=。命中带 get: 和 preview:。全文用 exp_get',
-    'exp_recall q= slot= tag=    同检索。有命中先按 get 行读，没有命中才可以生成',
+    'exp_search q= slot= tag= [task=]    先检索，要写 q= 或 tag=。tag是经验过滤，task只关联当前任务。全文用 exp_get',
+    'exp_recall q= slot= tag= [task=]    同检索。有命中先按 get 行读，没有命中才可以生成',
     'exp_get id= slot=           读一条。全文前有 tags:。slot=all 不能调取',
     'exp_done c= t= k= tag= m= [record=本次方法JSON]   先检索再写草稿，保留结构化方法。slot=all不能写',
     'exp_save id= verified=1     没有 verified=1 不进索引。slot=all 不能入库',
@@ -308,6 +308,13 @@ function Invoke-YaSearch([string]$Lib, $Map, [bool]$Recall) {
   if (Test-YaCrossSlotWord $slotArg) { $slotArg = 'all' }
   $query = Get-YaArg $Map 'q'
   $tag = Get-YaArg $Map 'tag'
+  $taskId = Get-YaArg $Map 'task'
+  $gateTag = $tag
+  if ($taskId) {
+    $flow = Read-YaFlow $Lib
+    if (-not $flow.current -or [string]$flow.current.id -cne $taskId -or [string]$flow.current.slot -cne $slotArg -or [string]$flow.current.status -ne '进行中') { throw 'TASK_SEARCH_MISMATCH: task=必须是本槽当前进行中的任务；不是经验标签过滤条件。' }
+    $gateTag = [string]$flow.current.tag
+  }
   $hits = Search-YaDual $Lib $slotArg $query $tag
   $hitList = Get-YaItems $hits
   $clean = New-Object System.Collections.Generic.List[object]
@@ -316,11 +323,12 @@ function Invoke-YaSearch([string]$Lib, $Map, [bool]$Recall) {
     if (Test-YaIndexContentDirty $hit.entry ([string]$hit.slot)) { $skipped++; continue }
     [void]$clean.Add($hit)
   }
-  Mark-YaRecalled $Lib $slotArg $tag $query $clean.Count
+  Mark-YaRecalled $Lib $slotArg $gateTag $query $clean.Count
   $usage = Get-YaSlotUsage $Lib $slotArg
   Write-Output ('slot: ' + (Format-YaShownId $slotArg))
   Write-Output ('query: ' + (Repair-YaLine $query))
   Write-Output ('tag: ' + (Repair-YaLine $tag))
+  if ($taskId) { Write-Output ('task: ' + $taskId) }
   Write-Output ('hits: ' + $clean.Count)
   foreach ($hit in $clean) {
     $e = $hit.entry

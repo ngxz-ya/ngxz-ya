@@ -4,7 +4,7 @@ $pkg=$PSScriptRoot
 . (Join-Path $pkg 'YA插件\连接上下文.ps1')
 . (Join-Path $pkg 'YA插件\真实记录.ps1')
 . (Join-Path $pkg '安装卸载\运行时\ya_slots.ps1')
-$held=$false;$owns=$false;$runtimeHeld=$false;$oldNonce=$env:YALINK_OPERATION
+$held=$false;$owns=$false;$runtimeHeld=$false;$oldNonce=$env:YALINK_OPERATION;$sessionGuard=$null;$sessionHeld=$false;$sessionRef=$null
 $guard=[Threading.Mutex]::new($false,('Local\YASoftwareOperation-'+[YaEvidence]::Identity($pkg)))
 $runtimeGuard=[Threading.Mutex]::new($false,('Local\YARuntime-'+[YaEvidence]::Identity($pkg)))
 $operation=Join-Path (Get-YaPackageHudHome $pkg) 'operation.json'
@@ -30,6 +30,10 @@ function Worker([string]$Action){
   return $reply
  }finally{$child.Dispose()}
 }
+function CurrentLiveLink {
+ if($method.mode -ne 'interactive' -or -not $method.frontend){return $false}
+ try{$hudIo=Join-Path (Get-YaPackageHudHome $pkg) 'io';$current=[YaEvidence]::Read((Join-Path $hudIo 'link.json'));return ($current['slot'] -ceq $Slot -and -not [YaEvidence]::CheckCommandChannel($pkg,$hudIo,$current))}catch{return $false}
+}
 try{
  Assert-YaIsolatedPackage $pkg
  if($RequestId -cnotmatch '^[a-f0-9]{32}$' -or -not (Test-YaSlotId $Slot) -or $Slot -in @('all','generic')){throw 'INPUT: invalid request or software slot'}
@@ -49,6 +53,20 @@ try{
  $driver=Join-Path (Split-Path $methodFile -Parent) $method.driver
  $driverHash=(Get-FileHash -LiteralPath $driver).Hash
  if($driverHash -cne $method.driver_sha256){throw 'METHOD_CHANGED: review changed code before running'}
+ if($method.mode -eq 'interactive' -and $method.frontend){
+  $io=Join-Path (Get-YaPackageHudHome $pkg) 'io';$link=[YaEvidence]::Read((Join-Path $io 'link.json'))
+  if($link['slot'] -cne $Slot -or [YaEvidence]::CheckCommandChannel($pkg,$io,$link)){throw 'FRONTEND_SESSION_REQUIRED'}
+  $sessionGuard=[Threading.Mutex]::new($false,('Local\YAFrontendSession-'+$link['pid']+'-'+$link['process_start']))
+  $abandoned=$false
+  try{$sessionHeld=$sessionGuard.WaitOne(0)}catch [Threading.AbandonedMutexException]{$sessionHeld=$true;$abandoned=$true}
+  if(-not $sessionHeld){throw 'BUSY: another workspace is using this frontend software process'}
+  $sessionRef=Join-Path $env:LOCALAPPDATA ('YALink\frontend\'+$link['pid']+'-'+$link['process_start']+'\request.json')
+  if(Test-Path -LiteralPath $sessionRef){
+   $previous=Get-Content -LiteralPath $sessionRef -Raw -Encoding UTF8|ConvertFrom-Json
+   $previousState=Get-Content -LiteralPath $previous.state_file -Raw -Encoding UTF8|ConvertFrom-Json
+   if(-not $previous.request -or $previousState.request -cne $previous.request -or $previousState.status -ne 'completed'){throw 'RECOVERY_REQUIRED: this frontend process has an incomplete task in another workspace; preserve its evidence'}
+  }elseif($abandoned){throw 'RECOVERY_REQUIRED: previous frontend owner ended unexpectedly'}
+ }
  $held=$guard.WaitOne(0);if(-not $held){throw 'BUSY: another software task owns this workspace'}
  $runtimeHeld=$runtimeGuard.WaitOne(0);if(-not $runtimeHeld){throw 'BUSY: experience state is being updated'}
  Assert-YaOperation $pkg
@@ -61,17 +79,18 @@ try{
   if($old.plan_hash -cne $planHash -or $old.driver_hash -cne $driverHash -or $old.method_hash -cne $methodHash){throw 'REQUEST_CONFLICT'}
   if($old.status -ne 'completed'){throw 'RECOVERY_REQUIRED: existing incomplete request'}
   foreach($artifact in $old.artifacts){if(-not [IO.File]::Exists($artifact.path) -or (Get-FileHash -LiteralPath $artifact.path).Hash -cne $artifact.sha256){throw 'EVIDENCE_CHANGED'}}
-  @{status=$(if($old.mode -eq 'simulation'){'SIMULATED'}elseif($old.mode -eq 'batch'){'VERIFIED_BATCH'}else{'VERIFIED_EXECUTION'});cached=$true;request=$RequestId;mode=$old.mode;live_link=$false}|ConvertTo-Json;exit 0
+  @{status=$(if($old.mode -eq 'simulation'){'SIMULATED'}elseif($old.mode -eq 'batch'){'VERIFIED_BATCH'}else{'VERIFIED_EXECUTION'});cached=$true;request=$RequestId;mode=$old.mode;live_link=(CurrentLiveLink)}|ConvertTo-Json;exit 0
  }
  $nonce=[guid]::NewGuid().ToString('N');$env:YALINK_OPERATION=$nonce
  Write-YaAtomic $stateFile @{status='prepared';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash}
  Write-YaAtomic (Join-Path (Get-YaPackageHudHome $pkg) 'operation_request.json') @{request=$RequestId;state_file=$stateFile}
+ if($sessionRef){Write-YaAtomic $sessionRef @{request=$RequestId;state_file=$stateFile;package_id=[YaEvidence]::Identity($pkg)}}
  Write-YaAtomic $operation @{status='pending';request=$RequestId;nonce=$nonce;owner_pid=$PID;owner_start=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString();time=[DateTime]::UtcNow.ToString('o')}
  $owns=$true
  $runtimeGuard.ReleaseMutex();$runtimeHeld=$false
  $null=Runtime @('task_open',('slot='+$Slot),('tag='+$RequestId),('title='+$plan.title))
  $flowId=(Get-Content -LiteralPath (Join-Path $pkg '经验库\流程.json') -Raw -Encoding UTF8|ConvertFrom-Json).current.id
- $null=Runtime @('exp_recall',('slot='+$Slot),('tag='+$RequestId),('q='+$plan.title))
+ $null=Runtime @('exp_recall',('slot='+$Slot),('task='+$flowId),('q='+$plan.title))
  $used=@()
  foreach($use in @($plan.used_experiences)){
   if(-not $use){continue}
@@ -85,7 +104,7 @@ try{
   $used+=@{id=$use.id;reason=$use.reason;applicability_check=$use.applicability_check;steps=$use.steps;sha256=(Get-FileHash -LiteralPath (Get-YaFormalFile $resolved.dir $use.id)).Hash}
  }
  $contextFile=Join-Path $job 'task.json'
- Write-YaAtomic $contextFile @{schema=1;request=$RequestId;nonce=$nonce;software=$Software;software_version=$method.software_version;interface=$method.interface;directory=$job;plan=$plan;used_experiences=$used;driver_sha256=$driverHash}
+ Write-YaAtomic $contextFile @{schema=1;request=$RequestId;nonce=$nonce;slot=$Slot;timeout_seconds=$TimeoutSeconds;software=$Software;software_version=$method.software_version;interface=$method.interface;directory=$job;plan=$plan;used_experiences=$used;driver_sha256=$driverHash}
  $check=Worker 'Check';if($check.status -ne 'READY'){throw 'SOFTWARE_NOT_READY'}
  Write-YaAtomic $stateFile @{status='dispatched';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash}
  $executed=Worker 'Execute'
@@ -128,19 +147,19 @@ try{
  }
  $eventKind=if($method.mode -eq 'simulation'){'validation_simulated'}else{'experience_verified'}
  Add-YaActualEvent $pkg $eventKind @{task=$flowId;request=$RequestId;slot=$Slot;experience=$saved.id;context=$context;reused_experience=$(if($used.Count){$used[0].id}else{''});used_experiences=$used;verification=$full.verification_state;elapsed_ms=([DateTime]::UtcNow-$started).TotalMilliseconds;mode=$method.mode}
- Write-YaAtomic (Join-Path (Split-Path $methodFile -Parent) '连接验证.json') @{software=$Software;version=$method.software_version;driver_hash=$driverHash;mode=$method.mode;verified=($method.mode -ne 'simulation');request=$RequestId;evidence=$job;time=[DateTime]::UtcNow.ToString('o');live_link=$false}
+ Write-YaAtomic (Join-Path (Split-Path $methodFile -Parent) '连接验证.json') @{software=$Software;version=$method.software_version;driver_hash=$driverHash;mode=$method.mode;verified=($method.mode -ne 'simulation');request=$RequestId;evidence=$job;time=[DateTime]::UtcNow.ToString('o');live_link=(CurrentLiveLink)}
  foreach($name in @('search','compare','draft','claim','inspect')){$null=Runtime @('step_check',('item='+$name),'pass=1','note=本次软件独立回读与执行前验收值比较通过')}
  $null=Runtime @('step_finish');$null=Runtime @('step_accept','note=工具验收通过；不替代生产工程审查')
  Write-YaAtomic $stateFile @{status='completed';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash;experience=$saved.id;artifacts=$artifacts;mode=$method.mode;used_experiences=$used}
  Write-YaAtomic $operation @{status='completed';request=$RequestId;time=[DateTime]::UtcNow.ToString('o')}
- @{status=$(if($method.mode -eq 'simulation'){'SIMULATED'}elseif($method.mode -eq 'batch'){'VERIFIED_BATCH'}else{'VERIFIED_EXECUTION'});request=$RequestId;experience=$saved.id;mode=$method.mode;live_link=$false;token='未统计（除非另接真实用量源）';savings='待对照';evidence=$job}|ConvertTo-Json -Depth 8
+ @{status=$(if($method.mode -eq 'simulation'){'SIMULATED'}elseif($method.mode -eq 'batch'){'VERIFIED_BATCH'}else{'VERIFIED_EXECUTION'});request=$RequestId;experience=$saved.id;mode=$method.mode;live_link=(CurrentLiveLink);token='未统计（除非另接真实用量源）';savings='待对照';evidence=$job}|ConvertTo-Json -Depth 8
 }catch{
  $errorText=$_.Exception.Message
  if($owns){
   try{
    Write-YaAtomic (Join-Path $job 'failure.json') @{request=$RequestId;error=$errorText;time=[DateTime]::UtcNow.ToString('o');status='unresolved';plan=$plan}
    Add-YaActualEvent $pkg 'reference_failed' @{task=$RequestId;slot=$Slot;error=$errorText;directory=$job}
-   $null=Runtime @('exp_recall',('slot='+$Slot),('tag='+$RequestId),('q='+$plan.title))
+   $null=Runtime @('exp_recall',('slot='+$Slot),('task='+$flowId),('q='+$plan.title))
    $failureRecipe=@{schema=1;title=('待排查：'+$plan.title);objective=$plan.objective;conditions=@{slot=$Slot;software=$Software;version=$method.software_version;interface=$method.interface;parameters=$plan.parameters};steps=@('查看本次原始执行和独立回读日志','核对软件是否迟到执行，未经核查不重复操作');verification=@{check='尚未找到并验证修复方式';evidence=@((Join-Path $job 'failure.json'));claimed_result='FAIL: '+$errorText};recovery='保留请求状态、日志和模型，人工核查；解决后另记恢复证据';applicability=$plan.applicability;source='本次真实失败；原因和解决办法仍待查证'}
    $failureRecipeFile=Join-Path $job 'pitfall-draft.json';Write-YaAtomic $failureRecipeFile $failureRecipe
    $null=Runtime @('exp_done',('slot='+$Slot),('tag='+$RequestId),'c=坑',('record='+$failureRecipeFile))
@@ -149,4 +168,4 @@ try{
   try{Write-YaAtomic $operation @{status='blocked';request=$RequestId;error=$errorText;state_file=$stateFile;time=[DateTime]::UtcNow.ToString('o')}}catch{}
  }
  @{status='FAIL';error=$errorText;operation=$operation;next='保留状态与软件结果；不自动清 blocked，不自动重发'}|ConvertTo-Json;exit 1
-}finally{if($runtimeHeld){$runtimeGuard.ReleaseMutex()};if($held){$guard.ReleaseMutex()};$runtimeGuard.Dispose();$guard.Dispose();$env:YALINK_OPERATION=$oldNonce}
+}finally{if($runtimeHeld){$runtimeGuard.ReleaseMutex()};if($held){$guard.ReleaseMutex()};if($sessionHeld){$sessionGuard.ReleaseMutex()};if($sessionGuard){$sessionGuard.Dispose()};$runtimeGuard.Dispose();$guard.Dispose();$env:YALINK_OPERATION=$oldNonce}
