@@ -28,7 +28,14 @@ try{
   $same=@($sourceFiles|Where-Object {$r=$_;@($current.files|Where-Object {$_.file -ceq $r.file -and $_.sha256 -ceq $r.sha256}).Count -ne 1 -or -not [IO.File]::Exists((Join-Path $runtime $r.file)) -or (Get-FileHash -LiteralPath (Join-Path $runtime $r.file)).Hash -cne $r.sha256}).Count -eq 0
  }
  if(-not $same){
-  $stage=Join-Path $Workspace ('部署暂存-'+[guid]::NewGuid().ToString('N'))
+  $deployRecords=Join-Path $Workspace '部署记录'
+  if(-not (Test-Path -LiteralPath $deployRecords)){
+   $recordDir=[IO.Directory]::CreateDirectory($deployRecords)
+   $recordDir.Attributes=$recordDir.Attributes -bor [IO.FileAttributes]::Hidden
+  }
+  $recordDir=Get-Item -LiteralPath $deployRecords -Force
+  if(-not $recordDir.PSIsContainer -or ($recordDir.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw '部署记录目录无效'}
+  $stage=Join-Path $recordDir.FullName ('部署暂存-'+[guid]::NewGuid().ToString('N'))
   & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $source '准备隔离包.ps1') -Destination $stage -Profile TestCopy
   if($LASTEXITCODE){throw '打包检查失败；保留现场'}
   $guard=$null;$softwareGuard=$null;$runtimeHeld=$false;$softwareHeld=$false
@@ -71,6 +78,12 @@ try{
   }finally{if($runtimeHeld){$guard.ReleaseMutex()};if($softwareHeld){$softwareGuard.ReleaseMutex()};if($guard){$guard.Dispose()};if($softwareGuard){$softwareGuard.Dispose()}}
   [IO.File]::WriteAllText((Join-Path $runtime '包信息.json'),'{"schema":2,"stage":"UserWorkspace","product":"ngxz-ya"}',[Text.UTF8Encoding]::new($true))
   [IO.File]::WriteAllText($currentFile,(@{schema=1;files=$sourceFiles;updated_utc=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($true))
+  if(Test-Path -LiteralPath $stage){
+   $stagedCopy=Get-Item -LiteralPath $stage
+   if($stagedCopy.PSIsContainer -and $stagedCopy.Parent.FullName -ieq $recordDir.FullName -and -not ($stagedCopy.Attributes -band [IO.FileAttributes]::ReparsePoint)){
+    Remove-Item -LiteralPath $stagedCopy.FullName -Recurse -Force -ErrorAction Continue
+   }
+  }
  }
  [IO.File]::WriteAllText($marker,(@{schema=1;product='ngxz-ya';runtime='工作区';experience='工作区\经验库';connections='工作区\连接教练\连接经验';artifacts='成果';note='经验与程序更新独立保留；重新下载后仍使用这个工作区，不复制旧测试结果'}|ConvertTo-Json),[Text.UTF8Encoding]::new($true))
  [IO.Directory]::CreateDirectory((Join-Path $Workspace '成果'))|Out-Null
