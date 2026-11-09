@@ -1,5 +1,6 @@
 ﻿param([Parameter(Mandatory=$true)][string]$Software,[string]$Workspace,[switch]$NoPanel,[switch]$Fresh,[switch]$OpenCad)
 $ErrorActionPreference='Stop'
+Write-Output 'note: BLIND_TEST_NO_HOME_ENUM — do not list USERPROFILE/Desktop/Documents for old ngxz copies; only this package + managed workspace'
 if($PSVersionTable.PSEdition -ne 'Desktop'){throw '请使用 Windows PowerShell 5.1'}
 if($OpenCad -and ($Software -ine 'FreeCAD' -or $NoPanel)){throw 'OPEN_CAD_REQUIRES_FREECAD_AND_DESKTOP'}
 if(-not $Workspace){
