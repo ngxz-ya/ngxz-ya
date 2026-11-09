@@ -86,14 +86,43 @@ try{
   exit 0
  }
  $candidates=@()
+ $versionCandidates=@()
+ $nameParts=@($Software -split '[\s._-]+|(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])' | Where-Object {$_})
+ $namePattern='(?<![A-Za-z0-9])'+(($nameParts|ForEach-Object{[regex]::Escape($_)}) -join '[\s._-]*')+'(?![A-Za-z0-9])'
+ $versionHint=[regex]::Match($Software,'(?<![0-9])[0-9]{4}$').Value
  foreach($key in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*')){
-  foreach($app in @(Get-ItemProperty -Path $key -ErrorAction SilentlyContinue|Where-Object {$_.DisplayName -and $_.DisplayName -match ('(?<![A-Za-z0-9])'+[regex]::Escape($Software)+'(?![A-Za-z0-9])')})){
-   $candidates+=@{name=$app.DisplayName;version=$app.DisplayVersion;installation=$app.InstallLocation;source='Windows installed-app registration; candidate, not verified interface'}
+  foreach($app in @(Get-ItemProperty -Path $key -ErrorAction SilentlyContinue|Where-Object {$_.DisplayName})){
+   $nameMatched=$nameParts.Count -gt 0 -and $app.DisplayName -match $namePattern
+   $versionMatched=$versionHint -and $app.InstallLocation -and
+    ($app.DisplayName -match ('(?<![0-9])'+$versionHint+'(?![0-9])') -or
+     $app.DisplayVersion -match ('^'+$versionHint.Substring(0,2)+'[.]?'+$versionHint.Substring(2,2)+'(?:[.]|$)'))
+   if(-not $nameMatched -and -not $versionMatched){continue}
+   $candidate=@{name=$app.DisplayName;version=$app.DisplayVersion;installation=$app.InstallLocation;source='Windows installed-app registration'}
+   if($nameMatched){$candidates+=$candidate}else{$versionCandidates+=$candidate}
   }
  }
  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '连接教练\连接经验\经验分存.ps1') find ('slot='+$slot) q=连接
  if($LASTEXITCODE){throw 'EXPERIENCE_SEARCH_FAILED'}
  $method=Join-Path $pkg ('连接教练\连接经验\'+$slot+'\方法.json')
  $hasMethod=Test-Path -LiteralPath $method
- @{status=$(if($hasMethod){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'});software=$Software;slot=$slot;installation_candidates=$candidates;method=$method;connected=$false;live_link=$false;connection_acceptance='Connect -TaskFile <本次任务JSON>';next=@('先读本机连接卡和已有经验，核对软件版本与条件','前台未连接或 YA 未显示时先运行 -Action Diagnose','缺方法时由Agent查合法官方接口或开源方案；记录来源、许可与安全审查','先读连接教练/通用接入指南.md，再用适配器/准备接入.ps1生成规范文件；草稿不代表已连接','前台连接验收用 -Action Connect -TaskFile；只做后台任务才用 Run；失败保留证据','图形软件支持时打开其可见窗口与本次成果；窗口展示和实时连接单独核验');token='未统计（除非另接真实用量源）';savings='待对照'}|ConvertTo-Json -Depth 8
+ $frontend=@{stage='FRONTEND_ADAPTER_MISSING';next='在包内查找当前版本的前台方法，缺失时先核对该版本的合法加载入口'}
+ if($hasMethod){
+  try{
+   $localMethod=Get-Content -LiteralPath $method -Raw -Encoding UTF8|ConvertFrom-Json
+   if($localMethod.mode -eq 'interactive' -and $localMethod.status -eq 'reviewed' -and $localMethod.frontend){
+    $frontend=@{stage='FRONTEND_METHOD_RECHECK_REQUIRED';next='核对实际版本，加载桥接并做只读探针，再登记 YA'}
+   }elseif($localMethod.mode -eq 'batch'){
+    $frontend.next='已有方法仅支持批处理，首连仍需前台适配器'
+   }
+  }catch{$frontend.next='现有方法文件无法读取，保留文件并检查格式'}
+ }
+ @{
+  status=$(if($hasMethod){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'})
+  software=$Software;slot=$slot;installation_candidates=$candidates;version_only_candidates=$versionCandidates
+  installation_next='名称匹配和版本匹配都是候选。先核对候选安装目录中实际可执行文件的产品名与版本，只有版本相同时不得据此启动或登记'
+  method=$method;frontend=$frontend;connected=$false;live_link=$false
+  connection_acceptance='Connect -TaskFile <本次任务JSON>'
+  next=@('先读连接教练/通用接入指南.md，核对当前软件版本和方法来源','前台未连接或 YA 未显示时运行 -Action Diagnose','先加载桥接、做只读探针并登记 YA，再运行带 TaskFile 的 Connect')
+  token='未统计（除非另接真实用量源）';savings='待对照'
+ }|ConvertTo-Json -Depth 8
 }catch{@{status='FAIL';error=$_.Exception.Message}|ConvertTo-Json;exit 1}
