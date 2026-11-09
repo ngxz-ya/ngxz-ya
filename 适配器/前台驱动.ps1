@@ -12,6 +12,16 @@ try {
  $method=Get-Content -LiteralPath (Join-Path $local '方法.json') -Raw -Encoding UTF8|ConvertFrom-Json
  $f=$method.frontend
  if($method.mode -ne 'interactive' -or $method.software_version -cne $c.software_version -or $f.bridge_sha256 -cnotmatch '^[A-F0-9]{64}$' -or $f.extension -cnotmatch '^[a-z0-9]{1,10}$' -or $f.reader -cnotmatch '^[A-Za-z0-9_-]+\.ps1$'){throw 'FRONTEND_METHOD_REQUIRED'}
+
+# Enforce in-package / this-run bridge only (never borrow foreign project DLLs).
+foreach($bpName in @('bridge_path','bridge','adapter_path','dll_path')){
+  $bp=[string]$f.$bpName
+  if($bp){ Assert-YaLocalBridge $pkg $bp }
+}
+if($f.PSObject.Properties.Name -contains 'bridge' -and $f.bridge){
+  $bridgeFile=Join-Path $local ([string]$f.bridge)
+  if(Test-Path -LiteralPath $bridgeFile -PathType Leaf){ Assert-YaLocalBridge $pkg $bridgeFile }
+}
  $reader=Join-Path $local $f.reader
  if((Get-FileHash -LiteralPath $reader).Hash -cne $f.reader_sha256){throw 'READER_CHANGED_REVIEW_REQUIRED'}
  $io=Join-Path (Get-YaPackageHudHome $pkg) 'io'

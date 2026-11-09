@@ -190,6 +190,19 @@ try {
 
   # 同实例去重交给 ya_hud 的互斥量。
 
+  
+# Refuse SoftOn registration that points at a foreign bridge/DLL outside this package or managed workspace.
+foreach ($bk in @('bridge_path','bridge','adapter_path','dll_path')) {
+  $bv = A $bk
+  if ($bv) {
+    $reason = [YaEvidence]::AssertLocalBridge($pkg, $bv)
+    if ($reason) { throw ('FOREIGN_BRIDGE_REFUSED: ' + $reason) }
+  }
+}
+if ($proof.Contains('bridge_path') -and $proof['bridge_path']) {
+  $reason = [YaEvidence]::AssertLocalBridge($pkg, [string]$proof['bridge_path'])
+  if ($reason) { throw ('FOREIGN_BRIDGE_REFUSED: ' + $reason) }
+}
   if ([YaEvidence]::Check($pkg, $io, $proof)) { throw '登记前证据已变化或过期；重新挑战。' }
   Write-YaJsonFile $linkPath ([ordered]@{
       version   = 1

@@ -32,3 +32,15 @@ function Write-YaReadback {
   if($Source){$reply.source=$Source;$reply.reader_pid=$ReaderPid;$reply.model_sha256=$ModelSha256}
   Write-YaAtomic (Join-Path $Context.directory 'Verify.json') $reply
 }
+
+function Start-YaDetachedGui {
+  param([Parameter(Mandatory=$true)][string]$FilePath,[string[]]$Arguments=@(),[string]$Directory)
+  Assert-YaIsolatedPackage $yaToolsPackage
+  Assert-YaOperation $yaToolsPackage
+  $FilePath=[IO.Path]::GetFullPath($FilePath)
+  if(-not $Directory){$Directory=[IO.Path]::GetDirectoryName($FilePath)}
+  $Directory=[IO.Path]::GetFullPath($Directory)
+  if(-not [IO.File]::Exists($FilePath)){throw 'GUI_START: executable missing'}
+  # Breaks away from the Agent job object so teardown cannot kill the target software.
+  return [YaWindow]::LaunchInteractive($FilePath, @($Arguments), $Directory)
+}

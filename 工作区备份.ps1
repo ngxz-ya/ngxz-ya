@@ -59,7 +59,7 @@ try{
  }
  Assert-YaOperation $runtime
  $filesByName=@{}
- foreach($name in @('工作区','成果','工作区说明.json','程序版本.json','迁移待核验.json')){
+ foreach($name in @('工作区','artifacts','成果','工作区说明.json','程序版本.json','迁移待核验.json')){
   $path=Join-Path $Workspace $name
   if(Test-Path -LiteralPath $path){
    foreach($item in @(Get-Item -LiteralPath $path)+@(Get-ChildItem -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue)){

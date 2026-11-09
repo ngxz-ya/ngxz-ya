@@ -2,7 +2,17 @@
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSEdition -ne 'Desktop'){throw '请使用 Windows PowerShell 5.1'}
 if($OpenCad -and ($Software -ine 'FreeCAD' -or $NoPanel)){throw 'OPEN_CAD_REQUIRES_FREECAD_AND_DESKTOP'}
-if(-not $Workspace){$Workspace=Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'ngxz-ya'}
+if(-not $Workspace){
+  # Daily use: Desktop\ngxz-ya. Blind/Temp downloads: sibling workspace under the same Temp parent (experience stays with this download session, not the user Desktop).
+  $desk=[Environment]::GetFolderPath('DesktopDirectory')
+  $src=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
+  $tempRoot=[IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
+  if($src.StartsWith($tempRoot+'\',[StringComparison]::OrdinalIgnoreCase) -or $src -match '\\Temp\\'){
+    $Workspace=Join-Path (Split-Path $src -Parent) 'ngxz-ya-workspace'
+  } else {
+    $Workspace=Join-Path $desk 'ngxz-ya'
+  }
+}
 $Workspace=[IO.Path]::GetFullPath($Workspace).TrimEnd('\')
 $source=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
 if($Workspace -eq $source -or $Workspace.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase)){throw '部署位置不能是源码或源码子目录'}
@@ -112,8 +122,9 @@ try{
    }
   }
  }
- [IO.File]::WriteAllText($marker,(@{schema=1;product='ngxz-ya';runtime='工作区';experience='工作区\经验库';connections='工作区\连接教练\连接经验';artifacts='成果';note='经验与程序更新独立保留；重新下载后仍使用这个工作区，不复制旧测试结果'}|ConvertTo-Json),[Text.UTF8Encoding]::new($true))
- [IO.Directory]::CreateDirectory((Join-Path $Workspace '成果'))|Out-Null
+ [IO.File]::WriteAllText($marker,(@{schema=1;product='ngxz-ya';runtime='工作区';experience='工作区\经验库';connections='工作区\连接教练\连接经验';artifacts='artifacts';note='经验与程序更新独立保留；重新下载后仍使用这个工作区，不复制旧测试结果'}|ConvertTo-Json),[Text.UTF8Encoding]::new($true))
+ [IO.Directory]::CreateDirectory((Join-Path $Workspace 'artifacts'))|Out-Null
+[IO.Directory]::CreateDirectory((Join-Path $Workspace '成果'))|Out-Null
  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '安装卸载\安装.ps1') -PackageOnly
  if($LASTEXITCODE){throw '安装失败，保留工作区'}
  Write-Output ('workspace: '+$runtime)

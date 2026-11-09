@@ -11,6 +11,17 @@ function Assert-YaIsolatedPackage([string]$Package) {
   $info=Get-Content -LiteralPath $marker -Raw -Encoding UTF8|ConvertFrom-Json
   if($info.schema -ne 2 -or $info.stage -notin @('TestCopy','AuditCandidate','UserWorkspace')){throw 'ISOLATION_METADATA_INVALID: 请从当前源码重新生成隔离副本。'}
 }
+
+function Assert-YaLocalBridge([string]$Package, [string]$BridgePath) {
+  if (-not ('YaEvidence' -as [type])) { throw 'YaEvidence type required before Assert-YaLocalBridge' }
+  $reason = [YaEvidence]::AssertLocalBridge($Package, $BridgePath)
+  if ($reason) { throw ('FOREIGN_BRIDGE_REFUSED: ' + $reason + '; bridge must be under this package or its managed workspace / this-run artifacts') }
+  return $true
+}
+function Test-YaLocalBridge([string]$Package, [string]$BridgePath) {
+  if (-not ('YaEvidence' -as [type])) { return $false }
+  return ([YaEvidence]::AssertLocalBridge($Package, $BridgePath) -eq '')
+}
 function Get-YaHudInstanceName([string]$PluginDir, [string]$HudHome) {
   $identity = [IO.Path]::GetFullPath($PluginDir).TrimEnd('\').ToLowerInvariant() + '|' + [IO.Path]::GetFullPath($HudHome).TrimEnd('\').ToLowerInvariant()
   $sha = [Security.Cryptography.SHA256]::Create()

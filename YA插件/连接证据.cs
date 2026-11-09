@@ -10,11 +10,37 @@ public static class YaEvidence {
   public static string Work(string pkg, string slot) {
     if (!System.Text.RegularExpressions.Regex.IsMatch(slot, "^[a-z][a-z0-9_-]{0,31}$") || slot == "all" || slot == "generic") throw new System.ArgumentException("slot= must be a dedicated slot id");
     string marker = System.IO.Path.Combine(pkg, "包信息.json");
-    if (System.IO.File.Exists(marker) && S(Read(marker), "stage") == "UserWorkspace")
-      return System.IO.Path.Combine(System.IO.Directory.GetParent(pkg).FullName, "成果", slot, Identity(pkg));
+    if (System.IO.File.Exists(marker) && S(Read(marker), "stage") == "UserWorkspace") {
+      string parent = System.IO.Directory.GetParent(pkg).FullName;
+      // ASCII artifacts avoids GBK/UTF-8 path corruption across pipes and native bridges.
+      string ascii = System.IO.Path.Combine(parent, "artifacts", slot, Identity(pkg));
+      string legacy = System.IO.Path.Combine(parent, "成果", slot, Identity(pkg));
+      if (System.IO.Directory.Exists(ascii) || !System.IO.Directory.Exists(legacy)) return ascii;
+      return legacy;
+    }
     string root = System.Environment.GetEnvironmentVariable("LOCALAPPDATA");
     if (System.Text.RegularExpressions.Regex.IsMatch(root, @"[^\x00-\x7F]")) root = System.Environment.GetEnvironmentVariable("ProgramData");
     return System.IO.Path.Combine(root, "YALink", "work", slot, Identity(pkg));
+  }
+
+  // Bridge/DLL used for SoftOn must live under this package or its managed workspace (or be generated this run under Work()).
+  public static string AssertLocalBridge(string pkg, string bridgePath) {
+    if (string.IsNullOrWhiteSpace(bridgePath)) return "bridge-path-required";
+    string full = System.IO.Path.GetFullPath(bridgePath);
+    if (!System.IO.File.Exists(full)) return "bridge-missing";
+    string pkgFull = System.IO.Path.GetFullPath(pkg).TrimEnd('\\');
+    System.IO.DirectoryInfo parentInfo = System.IO.Directory.GetParent(pkgFull);
+    string parent = parentInfo != null ? parentInfo.FullName.TrimEnd('\\') : pkgFull;
+    string workAscii = System.IO.Path.Combine(parent, "artifacts");
+    string workLegacy = System.IO.Path.Combine(parent, "成果");
+    bool underPkg = full.StartsWith(pkgFull + "\\", System.StringComparison.OrdinalIgnoreCase);
+    bool underWs = full.StartsWith(parent + "\\", System.StringComparison.OrdinalIgnoreCase)
+      && (full.StartsWith(workAscii + "\\", System.StringComparison.OrdinalIgnoreCase)
+       || full.StartsWith(workLegacy + "\\", System.StringComparison.OrdinalIgnoreCase)
+       || full.IndexOf("\\工作区\\", System.StringComparison.OrdinalIgnoreCase) >= 0
+       || full.IndexOf("\\连接教练\\", System.StringComparison.OrdinalIgnoreCase) >= 0);
+    if (underPkg || underWs) return "";
+    return "foreign-bridge-refused";
   }
   public static System.Collections.Generic.Dictionary<string, object> Read(string path) {
     return new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string, object>>(System.IO.File.ReadAllText(path, System.Text.Encoding.UTF8));
@@ -44,14 +70,15 @@ public static class YaEvidence {
       uint owner;
       if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle,out owner) || owner!=(uint)pid) throw new System.InvalidOperationException("WRONG_CHANNEL_PROCESS");
       int remaining=timeoutMs-(int)clock.ElapsedMilliseconds;
-      if (remaining<1 || !pipe.WriteAsync(bytes,0,bytes.Length).Wait(remaining)) throw new System.TimeoutException("CHANNEL_WRITE_UNKNOWN: do not resend");
       using (var data=new System.IO.MemoryStream()) {
         var buffer=new byte[4096]; bool done=false;
+        // Arm the first read before writing to avoid duplex deadlock with push-style bridges.
+        var read=pipe.ReadAsync(buffer,0,buffer.Length);
+        remaining=timeoutMs-(int)clock.ElapsedMilliseconds;
+        if (remaining<1 || !pipe.WriteAsync(bytes,0,bytes.Length).Wait(remaining)) throw new System.TimeoutException("CHANNEL_WRITE_UNKNOWN: do not resend");
         while (data.Length<262144) {
           remaining=timeoutMs-(int)clock.ElapsedMilliseconds;
           if (remaining<1) throw new System.TimeoutException("CHANNEL_READ_UNKNOWN: do not resend");
-          var read=pipe.ReadAsync(buffer,0,buffer.Length);
-          // Wait on this exact read until completion; no abandoned concurrent readers consuming the frame.
           if (!read.Wait(remaining)) throw new System.TimeoutException("CHANNEL_READ_UNKNOWN: do not resend");
           if (read.Result==0) throw new System.IO.EndOfStreamException("INCOMPLETE_CHANNEL_FRAME");
           for (int j=0;j<read.Result;j++) {
@@ -60,6 +87,7 @@ public static class YaEvidence {
             data.WriteByte(buffer[j]);
           }
           if (done) break;
+          read=pipe.ReadAsync(buffer,0,buffer.Length);
         }
         if (!done) throw new System.IO.InvalidDataException("CHANNEL_FRAME_TOO_LARGE");
         var reply=serializer.Deserialize<System.Collections.Generic.Dictionary<string,object>>(utf8.GetString(data.ToArray()));
@@ -89,19 +117,26 @@ public static class YaEvidence {
           var query=new System.Collections.Generic.Dictionary<string,object>();
           query["protocol"]="ngxz-ya/session-probe/1"; query["action"]="QUERY_SESSION"; query["request"]=request;
           var serializer=new System.Web.Script.Serialization.JavaScriptSerializer();
-          byte[] bytes=System.Text.Encoding.UTF8.GetBytes(serializer.Serialize(query)+"\n");
-          if (!pipe.WriteAsync(bytes,0,bytes.Length).Wait(1500)) return "channel-write-timeout";
+          var utf8=new System.Text.UTF8Encoding(false,true);
+          byte[] bytes=utf8.GetBytes(serializer.Serialize(query)+"\n");
+          // Arm read before write so a push-style server cannot deadlock the client; one frame per probe.
           var data=new System.IO.MemoryStream(); var clock=System.Diagnostics.Stopwatch.StartNew(); bool done=false;
-          byte[] buffer=new byte[1];
+          byte[] buffer=new byte[4096];
+          var read=pipe.ReadAsync(buffer,0,buffer.Length);
+          if (!pipe.WriteAsync(bytes,0,bytes.Length).Wait(1500)) return "channel-write-timeout";
           while (data.Length<16384 && clock.ElapsedMilliseconds<1500) {
-            var read=pipe.ReadAsync(buffer,0,1);
             if (!read.Wait(System.Math.Max(1,1500-(int)clock.ElapsedMilliseconds))) return "channel-read-timeout";
             if (read.Result==0) return "channel-closed";
-            if (buffer[0]==10) { done=true; break; }
-            data.WriteByte(buffer[0]);
+            for (int j=0;j<read.Result;j++) {
+              if (buffer[j]==10) { done=true; break; }
+              if (data.Length>=16384) return "invalid-channel-response";
+              data.WriteByte(buffer[j]);
+            }
+            if (done) break;
+            read=pipe.ReadAsync(buffer,0,buffer.Length);
           }
           if (!done) return "invalid-channel-response";
-          var reply=serializer.Deserialize<System.Collections.Generic.Dictionary<string,object>>(System.Text.Encoding.UTF8.GetString(data.ToArray()));
+          var reply=serializer.Deserialize<System.Collections.Generic.Dictionary<string,object>>(utf8.GetString(data.ToArray()));
           if (S(reply,"protocol")!="ngxz-ya/session-probe/1" || S(reply,"request")!=request) return "wrong-channel-request";
           if (S(reply,"pid")!=pid.ToString(System.Globalization.CultureInfo.InvariantCulture) || S(reply,"process_start")!=start) return "wrong-channel-identity";
           if (S(reply,"document_id")!=S(r,"document_id") || !System.String.Equals(S(reply,"document_path"),S(r,"document_path"),System.StringComparison.OrdinalIgnoreCase)) return "wrong-active-document";
@@ -184,6 +219,15 @@ public static class YaEvidence {
       if (checkedAt > now.AddSeconds(5) || read < issued || read > checkedAt.AddSeconds(legacy ? 1 : 0) ||
           (checkedAt - issued).TotalSeconds > 120 || System.IO.File.GetLastWriteTimeUtc(file) < issued) return "stale";
       if (S(r, "channel") != "software" || S(r, "software_state").Trim() == "") return "missing-software-state";
+      // SoftOn requires any recorded bridge/DLL path to be in-package or this-run workspace artifacts (never a foreign project path).
+      foreach (string bk in new string[] { "bridge_path", "bridge", "adapter_path", "dll_path" }) {
+        string bp = S(r, bk);
+        if (bp == "") bp = S(link, bk);
+        if (bp != "") {
+          string refused = AssertLocalBridge(pkg, bp);
+          if (refused != "") return refused;
+        }
+      }
       var proc = System.Diagnostics.Process.GetProcessById(int.Parse(S(c, "pid")));
       if (proc.HasExited || proc.StartTime.ToUniversalTime().Ticks.ToString() != S(c, "process_start")) return "wrong-process";
       if (S(link, "readback_sha256") != Hash(file)) return "changed-readback";
@@ -215,7 +259,7 @@ public static class YaWindow {
   public static int LaunchInteractive(string exe,string[] args,string directory){
     var startup=new Startup();startup.cb=System.Runtime.InteropServices.Marshal.SizeOf(startup);startup.desktop="winsta0\\default";
     var line=new System.Text.StringBuilder(Quote(exe));foreach(string arg in args)line.Append(' ').Append(Quote(arg));
-    ProcessInfo info;if(!CreateProcess(exe,line,System.IntPtr.Zero,System.IntPtr.Zero,false,0x08000000,System.IntPtr.Zero,directory,ref startup,out info))throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(),"INTERACTIVE_DESKTOP_START_FAILED");
+    ProcessInfo info;/* CREATE_BREAKAWAY_FROM_JOB|CREATE_NEW_PROCESS_GROUP so parent Agent job teardown cannot kill the GUI */if(!CreateProcess(exe,line,System.IntPtr.Zero,System.IntPtr.Zero,false,0x01000200,System.IntPtr.Zero,directory,ref startup,out info))throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(),"INTERACTIVE_DESKTOP_START_FAILED");
     CloseHandle(info.thread);CloseHandle(info.process);return info.pid;
   }
   public static bool InputVisible(int pid,long handle){
