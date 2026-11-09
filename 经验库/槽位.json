@@ -7,6 +7,12 @@
                       "dir":  "generic",
                       "id":  "generic",
                       "note":  "出厂空槽"
+                  },
+                  {
+                      "title":  "FreeCAD",
+                      "dir":  "freecad",
+                      "id":  "freecad",
+                      "note":  "开源建模专属空槽"
                   }
               ]
 }

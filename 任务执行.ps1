@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$Software,[Parameter(Mandatory=$true)][string]$Slot,[Parameter(Mandatory=$true)][string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120,[switch]$RequireInteractive)
+﻿param([Parameter(Mandatory=$true)][string]$Software,[Parameter(Mandatory=$true)][string]$Slot,[Parameter(Mandatory=$true)][string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120,[switch]$RequireInteractive,[switch]$AllowBatch)
 $ErrorActionPreference='Stop'
 $pkg=$PSScriptRoot
 . (Join-Path $pkg 'YA插件\连接上下文.ps1')
@@ -40,6 +40,10 @@ try{
  $plan=Get-Content -LiteralPath $TaskFile -Raw -Encoding UTF8|ConvertFrom-Json
  if($plan.schema -ne 1 -or -not $plan.objective -or -not $plan.title -or @($plan.steps).Count -lt 1 -or @($plan.expected).Count -lt 1 -or -not $plan.applicability -or -not $plan.recovery){throw 'INPUT: task requires objective,title,steps,expected,applicability,recovery'}
  if($plan.steps.Count -gt 20 -or $plan.title.Length -gt 200){throw 'INPUT: task too large'}
+ $keywords=Split-YaCommaList ($plan.keywords -join ',')
+ Assert-YaExperienceLimits $plan.title '' $keywords @()
+ foreach($keyword in $keywords){Assert-YaClean $keyword}
+ $recallQuery=if($keywords.Count){$keywords[0]}else{$plan.title}
  $category=if($plan.category){[string]$plan.category}else{'招式'}
  if($category -notin @('招式','坑','零件方案')){throw 'INPUT: category must be 招式,坑,零件方案'}
  foreach($step in $plan.steps){if([string]::IsNullOrWhiteSpace($step.description)){throw 'INPUT: each step needs a method description'}}
@@ -49,15 +53,20 @@ try{
  $methodHash=(Get-FileHash -LiteralPath $methodFile).Hash
  if($method.schema -ne 1 -or $method.software -ine $Software -or -not $method.software_version -or -not $method.interface -or -not $method.sources -or -not $method.license_review -or -not $method.safety_review -or $method.status -ne 'reviewed'){throw 'METHOD_REVIEW_REQUIRED: record provenance, license, safety, software/version and reviewed status'}
  if($method.mode -notin @('batch','interactive','simulation')){throw 'INPUT: mode must be batch, interactive or simulation'}
+ if($RequireInteractive -and $method.mode -ne 'interactive'){throw 'INTERACTIVE_CONNECTION_REQUIRED: Connect requires an interactive frontend method'}
+ if($method.mode -eq 'batch' -and -not $AllowBatch){throw 'BATCH_OPT_IN_REQUIRED: 当前方法仅支持后台。用户明确要求后台执行时才使用 Run -AllowBatch'}
  if($method.driver -notmatch '^[a-zA-Z0-9_-]+\.ps1$'){throw 'INVALID_DRIVER: use a local reviewed script basename'}
  $driver=Join-Path (Split-Path $methodFile -Parent) $method.driver
  $driverHash=(Get-FileHash -LiteralPath $driver).Hash
  if($driverHash -cne $method.driver_sha256){throw 'METHOD_CHANGED: review changed code before running'}
  Assert-YaPowerShellFile $driver
  if($method.mode -eq 'interactive' -and $method.frontend.reader -match '^[A-Za-z0-9_-]+\.ps1$'){Assert-YaPowerShellFile (Join-Path (Split-Path $methodFile -Parent) $method.frontend.reader)}
- if($RequireInteractive -and ($method.mode -cne 'interactive' -or -not $method.frontend -or -not (CurrentLiveLink))){throw 'INTERACTIVE_CONNECTION_REQUIRED: Connect needs a reviewed frontend method and a live GUI session; batch execution is not connection acceptance'}
- if($method.mode -eq 'interactive' -and $method.frontend){
-  $io=Join-Path (Get-YaPackageHudHome $pkg) 'io';$link=[YaEvidence]::Read((Join-Path $io 'link.json'))
+ if($method.mode -eq 'interactive' -and -not $method.frontend){throw 'INTERACTIVE_CONNECTION_REQUIRED: 当前方法没有前台通道配置'}
+ if($method.mode -eq 'interactive'){
+  $io=Join-Path (Get-YaPackageHudHome $pkg) 'io'
+  $linkPath=Join-Path $io 'link.json'
+  if(-not [IO.File]::Exists($linkPath)){throw 'INTERACTIVE_CONNECTION_REQUIRED: 当前会话尚未登记可核验的前台通道'}
+  $link=[YaEvidence]::Read($linkPath)
   if($link['slot'] -cne $Slot -or [YaEvidence]::CheckCommandChannel($pkg,$io,$link)){throw 'FRONTEND_SESSION_REQUIRED'}
   $sessionGuard=[Threading.Mutex]::new($false,('Local\YAFrontendSession-'+$link['pid']+'-'+$link['process_start']))
   $abandoned=$false
@@ -87,6 +96,13 @@ try{
   foreach($artifact in $old.artifacts){if(-not [IO.File]::Exists($artifact.path) -or (Get-FileHash -LiteralPath $artifact.path).Hash -cne $artifact.sha256){throw 'EVIDENCE_CHANGED'}}
   @{status=$(if($old.mode -eq 'simulation'){'SIMULATED'}elseif($old.mode -eq 'batch'){'VERIFIED_BATCH'}else{'VERIFIED_EXECUTION'});cached=$true;request=$RequestId;mode=$old.mode;live_link=(CurrentLiveLink)}|ConvertTo-Json;exit 0
  }
+ if($RequireInteractive){
+  $shown=@(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg 'YA插件\show_ya.ps1') -WithSoftware)
+  if($LASTEXITCODE){throw ('FRONTEND_NOT_VISIBLE_BEFORE_EXECUTION: '+($shown -join ' '))}
+  $proof=($shown -join [Environment]::NewLine)|ConvertFrom-Json
+  $visibleLink=[YaEvidence]::Read($linkPath)
+  if($proof.software_visible -ne $true -or [string]$proof.software_pid -cne [string]$link['pid'] -or $visibleLink['session'] -cne $link['session'] -or $visibleLink['process_start'] -cne $link['process_start']){throw 'FRONTEND_SESSION_CHANGED_BEFORE_EXECUTION'}
+ }
  $nonce=[guid]::NewGuid().ToString('N');$env:YALINK_OPERATION=$nonce
  Write-YaAtomic $stateFile @{status='prepared';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash}
  Write-YaAtomic (Join-Path (Get-YaPackageHudHome $pkg) 'operation_request.json') @{request=$RequestId;state_file=$stateFile}
@@ -102,7 +118,7 @@ try{
  }
  $null=Runtime @('task_open',('slot='+$Slot),('tag='+$RequestId),('title='+$plan.title))
  $flowId=(Get-Content -LiteralPath (Join-Path $pkg '经验库\流程.json') -Raw -Encoding UTF8|ConvertFrom-Json).current.id
- $null=Runtime @('exp_recall',('slot='+$Slot),('task='+$flowId),('q='+$plan.title))
+ $null=Runtime @('exp_recall',('slot='+$Slot),('task='+$flowId),('q='+$recallQuery))
  $used=@()
  foreach($use in @($plan.used_experiences)){
   if(-not $use){continue}
@@ -118,6 +134,12 @@ try{
  $contextFile=Join-Path $job 'task.json'
  Write-YaAtomic $contextFile @{schema=1;request=$RequestId;nonce=$nonce;slot=$Slot;timeout_seconds=$TimeoutSeconds;software=$Software;software_version=$method.software_version;interface=$method.interface;directory=$job;plan=$plan;used_experiences=$used;driver_sha256=$driverHash}
  $check=Worker 'Check';if($check.status -ne 'READY'){throw 'SOFTWARE_NOT_READY'}
+ if($RequireInteractive){
+  $binding=[YaEvidence]::Read((Join-Path $job 'frontend-session.json'))
+  foreach($key in @('session','pid','process_start')){
+   if([string]$binding[$key] -cne [string]$link[$key]){throw 'FRONTEND_SESSION_CHANGED_BEFORE_EXECUTION'}
+  }
+ }
  Write-YaAtomic $stateFile @{status='dispatched';request=$RequestId;plan_hash=$planHash;driver_hash=$driverHash;method_hash=$methodHash}
  $executed=Worker 'Execute'
  if($executed.status -cne 'EXECUTED'){throw 'EXECUTION_RECEIPT_SCHEMA: Execute must return status=EXECUTED'}
@@ -147,7 +169,7 @@ try{
  $context=@{task=$flowId;request=$RequestId;software=$Software;software_version=$method.software_version;interface=$method.interface;parameters=$plan.parameters;artifacts=$artifacts;job=$job;driver_hash=$driverHash;plan_hash=$planHash;used_experiences=$used;source_review=$method.sources;outcome='success'}
  $recipe=@{schema=1;title=$plan.title;objective=$plan.objective;conditions=@{slot=$Slot;software=$Software;version=$method.software_version;interface=$method.interface;parameters=$plan.parameters};steps=@($plan.steps|ForEach-Object {$_.description});verification=@{check='独立适配器进程重新读取软件结果，由核心与执行前目标逐项比较';evidence=@($artifacts.path);claimed_result='verified task readback'};recovery=$plan.recovery;applicability=$plan.applicability;source='本次任务、适配器原始日志、独立读取与核心对照'}
  $recipeFile=Join-Path $job 'method-record.json';Write-YaAtomic $recipeFile $recipe
- $draft=Runtime @('exp_done',('slot='+$Slot),('tag='+$RequestId),('c='+$category),('record='+$recipeFile))
+ $draft=Runtime @('exp_done',('slot='+$Slot),('tag='+$RequestId),('c='+$category),('k='+ ($keywords -join ',')),('record='+$recipeFile))
  $draftId=([regex]::Match($draft,'(?m)^draft:\s*(\S+)')).Groups[1].Value
  if(-not $draftId){throw 'DRAFT_SAVE_FAILED'}
  $full=[pscustomobject]@{verification_state='simulation_only'};$saved=@{id=$draftId}
@@ -174,7 +196,7 @@ try{
   try{
    Write-YaAtomic (Join-Path $job 'failure.json') @{request=$RequestId;error=$errorText;time=[DateTime]::UtcNow.ToString('o');status='unresolved';plan=$plan}
    Add-YaActualEvent $pkg 'reference_failed' @{task=$RequestId;slot=$Slot;error=$errorText;directory=$job}
-   $null=Runtime @('exp_recall',('slot='+$Slot),('task='+$flowId),('q='+$plan.title))
+   $null=Runtime @('exp_recall',('slot='+$Slot),('task='+$flowId),('q='+$recallQuery))
    $failureRecipe=@{schema=1;title=('待排查：'+$plan.title);objective=$plan.objective;conditions=@{slot=$Slot;software=$Software;version=$method.software_version;interface=$method.interface;parameters=$plan.parameters};steps=@('查看本次原始执行和独立回读日志','核对软件是否迟到执行，未经核查不重复操作');verification=@{check='尚未找到并验证修复方式';evidence=@((Join-Path $job 'failure.json'));claimed_result='FAIL: '+$errorText};recovery='保留请求状态、日志和模型，人工核查；解决后另记恢复证据';applicability=$plan.applicability;source='本次真实失败；原因和解决办法仍待查证'}
    $failureRecipeFile=Join-Path $job 'pitfall-draft.json';Write-YaAtomic $failureRecipeFile $failureRecipe
    $null=Runtime @('exp_done',('slot='+$Slot),('tag='+$RequestId),'c=坑',('record='+$failureRecipeFile))

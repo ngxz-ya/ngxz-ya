@@ -37,7 +37,18 @@ try{
   try{
     $held=$guard.WaitOne(0);if(-not $held){throw 'HUD_BUSY: another display request is active'}
     $software=$null
-    if($pending.with_software){$software=[YaEvidence]::Read((Join-Path $io 'link.json'));if([YaEvidence]::CheckCommandChannel($package,$io,$software) -or -not [YaWindow]::Front([int]$software['pid'])){throw 'SOFTWARE_NOT_USER_VISIBLE: preserve the software session; do not restart it'}}
+    if($pending.with_software){
+      $software=[YaEvidence]::Read((Join-Path $io 'link.json'))
+      if([YaEvidence]::CheckCommandChannel($package,$io,$software)){throw 'SOFTWARE_CHANNEL_NOT_CONFIRMED: preserve the software session'}
+      $softwarePid=[int]$software['pid']
+      $softwareVisible=$false
+      for($attempt=0;$attempt -lt 3;$attempt++){
+        $window=[YaWindow]::Find($softwarePid)
+        if([YaWindow]::InputVisible($softwarePid,$window.ToInt64()) -or [YaWindow]::Front($softwarePid)){$softwareVisible=$true;break}
+        Start-Sleep -Milliseconds 300
+      }
+      if(-not $softwareVisible){throw 'SOFTWARE_NOT_USER_VISIBLE: preserve the software session; do not restart it'}
+    }
     $ready=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::AutoReset,($name+'-Show-Visible'))
     [void]$ready.Reset();Write-YaAtomic (Join-Path $io 'hud_show_request.json') $pending
     $hud=Join-Path $PSScriptRoot 'ya_hud.ps1'

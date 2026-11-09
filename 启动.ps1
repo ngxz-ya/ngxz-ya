@@ -1,6 +1,7 @@
-﻿param([Parameter(Mandatory=$true)][string]$Software,[string]$Workspace,[switch]$NoPanel,[switch]$Fresh)
+﻿param([Parameter(Mandatory=$true)][string]$Software,[string]$Workspace,[switch]$NoPanel,[switch]$Fresh,[switch]$OpenCad)
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSEdition -ne 'Desktop'){throw '请使用 Windows PowerShell 5.1'}
+if($OpenCad -and ($Software -ine 'FreeCAD' -or $NoPanel)){throw 'OPEN_CAD_REQUIRES_FREECAD_AND_DESKTOP'}
 if(-not $Workspace){$Workspace=Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'ngxz-ya'}
 $Workspace=[IO.Path]::GetFullPath($Workspace).TrimEnd('\')
 $source=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
@@ -45,9 +46,16 @@ try{
      Copy-Item -LiteralPath $oldStatus -Destination $localStatus -Recurse
     }
     $backupDir=Join-Path $Workspace '备份';[IO.Directory]::CreateDirectory($backupDir)|Out-Null
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $backup=Join-Path $backupDir ('升级前程序和经验-'+[guid]::NewGuid().ToString('N')+'.zip')
-    [IO.Compression.ZipFile]::CreateFromDirectory($runtime,$backup)
+    Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
+    $backup=Join-Path $backupDir ('升级前程序-'+[guid]::NewGuid().ToString('N')+'.zip')
+    # Only program files are replaced. Live task data and HUD logs stay in place.
+    $zip=[IO.Compression.ZipFile]::Open($backup,[IO.Compression.ZipArchiveMode]::Create)
+    try{
+     foreach($row in $sourceFiles){
+      $file=Join-Path $runtime $row.file
+      if([IO.File]::Exists($file)){[void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,$file,$row.file)}
+     }
+    }finally{$zip.Dispose()}
     [IO.File]::WriteAllText((Join-Path $runtime '更新中.json'),'{"state":"updating"}',[Text.UTF8Encoding]::new($true))
     # Only allowlisted program files are updated. Factory indices and all private records stay in place.
     foreach($row in $sourceFiles){
@@ -68,8 +76,13 @@ try{
  [IO.Directory]::CreateDirectory((Join-Path $Workspace '成果'))|Out-Null
  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '安装卸载\安装.ps1') -PackageOnly
  if($LASTEXITCODE){throw '安装失败，保留工作区'}
- $panelExit=0
- if(-not $NoPanel){& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime 'YA插件\show_ya.ps1');$panelExit=$LASTEXITCODE}
- & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '连接软件.ps1') -Software $Software -Action Check
- if($LASTEXITCODE){exit $LASTEXITCODE};exit $panelExit
+ Write-Output ('workspace: '+$runtime)
+ if($OpenCad){
+  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '适配器\FreeCAD\启动.ps1')
+  exit $LASTEXITCODE
+ }
+ $checkArgs=@('-Software',$Software,'-Action','Check')
+ if(-not $NoPanel){$checkArgs+='-ShowPanel'}
+ & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '连接软件.ps1') @checkArgs
+ exit $LASTEXITCODE
 }finally{if($held){$lock.ReleaseMutex()};$lock.Dispose()}

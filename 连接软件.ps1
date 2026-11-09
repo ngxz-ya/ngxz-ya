@@ -1,10 +1,15 @@
-﻿param([Parameter(Mandatory=$true)][string]$Software,[ValidateSet('Check','Run','Diagnose','Connect')][string]$Action='Check',[string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120)
+﻿param([Parameter(Mandatory=$true)][string]$Software,[ValidateSet('Check','Run','Diagnose','Connect')][string]$Action='Check',[string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120,[switch]$AllowBatch,[switch]$ShowPanel)
 $ErrorActionPreference='Stop'
 $pkg=$PSScriptRoot
 try{
  if($PSVersionTable.PSEdition -ne 'Desktop'){throw 'ENVIRONMENT: Windows PowerShell 5.1 required'}
  if([string]::IsNullOrWhiteSpace($Software) -or $Software.Length -gt 100 -or $Software -match '[\r\n]'){throw 'INPUT: 请给出具体软件名称'}
  $Software=$Software.Trim()
+ if($AllowBatch -and $Action -ne 'Run'){throw 'INPUT: -AllowBatch 只适用于明确要求后台执行的 Run'}
+ if($Action -eq 'Connect' -and -not $TaskFile){
+  @{status='CONNECT_TASK_REQUIRED';connected=$false;live_link=$false;next='先用 -Action Check 检查环境，前台通道登记后用 Connect -TaskFile 本次任务.json 验收'}|ConvertTo-Json
+  exit 1
+ }
  . (Join-Path $pkg 'YA插件\连接上下文.ps1')
  . (Join-Path $pkg 'YA插件\真实记录.ps1')
  Assert-YaIsolatedPackage $pkg
@@ -57,10 +62,11 @@ try{
  if($LASTEXITCODE){throw ($output -join "`n")}
  $slot=([regex]::Match(($output -join "`n"),'(?m)^slot:\s*(\S+)')).Groups[1].Value
  if(-not $slot){throw 'SLOT_CREATION_FAILED'}
- if($Action -eq 'Run' -or ($Action -eq 'Connect' -and $TaskFile)){
+ if($Action -in @('Run','Connect')){
   if(-not $TaskFile){throw 'INPUT: Run 需要 Agent 编写的 TaskFile，先读 适配器/说明.md'}
   $invokeArgs=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $pkg '任务执行.ps1'),'-Software',$Software,'-Slot',$slot,'-TaskFile',$TaskFile,'-RequestId',$RequestId,'-TimeoutSeconds',[string]$TimeoutSeconds)
   if($Action -eq 'Connect'){$invokeArgs+='-RequireInteractive'}
+  if($AllowBatch){$invokeArgs+='-AllowBatch'}
   & powershell @invokeArgs
   $taskExit=$LASTEXITCODE
   if($taskExit -or $Action -eq 'Run'){exit $taskExit}
@@ -85,6 +91,30 @@ try{
   @{status='CONNECTED_INTERACTIVE';software=$Software;request=$RequestId;live_link=$true;frontend_pid=$link['pid'];process_start=$link['process_start'];hud_visible=$true}|ConvertTo-Json
   exit 0
  }
+ # A checked, accepted live session can be handed to the next Agent without rediscovery.
+ $io=Join-Path (Get-YaPackageHudHome $pkg) 'io'
+ $linkFile=Join-Path $io 'link.json'
+ $accepted=$false
+ if(Test-Path -LiteralPath $linkFile){
+  try{
+   $link=[YaEvidence]::Read($linkFile)
+   $accepted=($link['slot'] -ceq $slot -and $link['soft'] -ieq $Software -and
+    -not [YaEvidence]::CheckCommandChannel($pkg,$io,$link) -and [YaEvidence]::HasFrontendAcceptance($pkg,$io,$link))
+  }catch{}
+ }
+ $hudVisible=$null
+ if($ShowPanel){
+  $panelArgs=@()
+  if($accepted){$panelArgs+='-WithSoftware'}
+  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg 'YA插件\show_ya.ps1') @panelArgs
+  $hudVisible=($LASTEXITCODE -eq 0)
+ }
+ if($accepted){
+  @{status=$(if($hudVisible -eq $false){'HUD_NOT_VISIBLE'}else{'CONNECTED_INTERACTIVE'});software=$Software;slot=$slot;workspace=$pkg
+    connected=($hudVisible -ne $false);live_link=$true;frontend_pid=$link['pid'];hud_visible=$hudVisible;reused_session=$true
+    next=$(if($hudVisible -eq $false){'保留当前模型，只复验 YA 显示'}else{'用 Run -TaskFile 在当前窗口执行下一任务'})}|ConvertTo-Json
+  if($hudVisible -eq $false){exit 1};exit 0
+ }
  $candidates=@()
  $versionCandidates=@()
  $nameParts=@($Software -split '[\s._-]+|(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])' | Where-Object {$_})
@@ -105,24 +135,25 @@ try{
  if($LASTEXITCODE){throw 'EXPERIENCE_SEARCH_FAILED'}
  $method=Join-Path $pkg ('连接教练\连接经验\'+$slot+'\方法.json')
  $hasMethod=Test-Path -LiteralPath $method
- $frontend=@{stage='FRONTEND_ADAPTER_MISSING';next='在包内查找当前版本的前台方法，缺失时先核对该版本的合法加载入口'}
+ $frontend=@{stage='FRONTEND_ADAPTER_MISSING';next='先确认目标软件窗口能就绪，再按通用接入指南查适用的前台接口和只读探针'}
  if($hasMethod){
   try{
    $localMethod=Get-Content -LiteralPath $method -Raw -Encoding UTF8|ConvertFrom-Json
    if($localMethod.mode -eq 'interactive' -and $localMethod.status -eq 'reviewed' -and $localMethod.frontend){
     $frontend=@{stage='FRONTEND_METHOD_RECHECK_REQUIRED';next='核对实际版本，加载桥接并做只读探针，再登记 YA'}
    }elseif($localMethod.mode -eq 'batch'){
-    $frontend.next='已有方法仅支持批处理，首连仍需前台适配器'
+    $frontend.next='已有方法仅支持批处理。保留它，先确认目标窗口与前台接口；连接请求不要改走后台'
    }
   }catch{$frontend.next='现有方法文件无法读取，保留文件并检查格式'}
  }
  @{
   status=$(if($hasMethod){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'})
-  software=$Software;slot=$slot;installation_candidates=$candidates;version_only_candidates=$versionCandidates
+  software=$Software;slot=$slot;workspace=$pkg;hud_visible=$hudVisible;installation_candidates=$candidates;version_only_candidates=$versionCandidates
   installation_next='名称匹配和版本匹配都是候选。先核对候选安装目录中实际可执行文件的产品名与版本，只有版本相同时不得据此启动或登记'
   method=$method;frontend=$frontend;connected=$false;live_link=$false
   connection_acceptance='Connect -TaskFile <本次任务JSON>'
-  next=@('先读连接教练/通用接入指南.md，核对当前软件版本和方法来源','前台未连接或 YA 未显示时运行 -Action Diagnose','先加载桥接、做只读探针并登记 YA，再运行带 TaskFile 的 Connect')
+  guide='连接教练/通用接入指南.md';next=$frontend.next
   token='未统计（除非另接真实用量源）';savings='待对照'
  }|ConvertTo-Json -Depth 8
+ if($hudVisible -eq $false){exit 1}
 }catch{@{status='FAIL';error=$_.Exception.Message}|ConvertTo-Json;exit 1}

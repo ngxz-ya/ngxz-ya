@@ -42,7 +42,7 @@ while($queue.Count){
     $hash=(Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
     $inventory+=[ordered]@{file=$rel;category=$category;included=$include;reason=$reason;origin=$origin;rights=$rights;sha256=$hash;length=$item.Length}
     if($include){
-      if($rel -notin @('.gitignore','LICENSE') -and $item.Extension -notin @('.ps1','.cs','.md','.txt','.json','.bat')){throw ('不允许的发布文件类型: '+$rel)}
+      if($rel -notin @('.gitignore','LICENSE') -and $item.Extension -notin @('.ps1','.cs','.md','.txt','.json','.bat','.py')){throw ('不允许的发布文件类型: '+$rel)}
       $text=[IO.File]::ReadAllText($item.FullName)
       if($text -match '(?im)(?:[A-Z]:\\(?:Users|UserData)\\|sk-[a-zA-Z0-9]{24,}|gh[pousr]_[a-zA-Z0-9]{24,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)'){throw ('待复核的私人路径或凭据特征: '+$rel)}
       $pending+=@{file=$rel;source=$item.FullName;sha256=$hash};$seen[$rel]=$true
@@ -63,16 +63,24 @@ function New-FactoryJson([string]$Relative,$Value){
   [IO.Directory]::CreateDirectory((Split-Path $path -Parent))|Out-Null
   [IO.File]::WriteAllText($path,(ConvertTo-Json -InputObject $Value -Depth 15),[Text.UTF8Encoding]::new($true))
 }
-New-FactoryJson '经验库/槽位.json' @{version=1;active='generic';slots=@(@{id='generic';title='未指定软件';dir='generic';note='出厂空槽'})}
+New-FactoryJson '经验库/槽位.json' @{version=1;active='generic';slots=@(@{id='generic';title='未指定软件';dir='generic';note='出厂空槽'},@{id='freecad';title='FreeCAD';dir='freecad';note='开源建模专属空槽'})}
 New-FactoryJson '经验库/槽/generic/索引.json' @{说明='本槽经验索引。只收已验证条目。';entries=@()}
+New-FactoryJson '经验库/槽/freecad/索引.json' @{说明='FreeCAD 用户经验索引。出厂为空。';entries=@()}
+foreach($slotId in @('generic','freecad')){
+  foreach($category in @('招式库','坑库','零件方案库','_草稿/招式库','_草稿/坑库','_草稿/零件方案库')){
+    [IO.Directory]::CreateDirectory((Join-Path $target ('经验库/槽/'+$slotId+'/'+$category)))|Out-Null
+  }
+}
 New-FactoryJson '连接教练/连接经验/索引.json' @{说明='本地连接卡出厂为空。';count=0;entries=@()}
-New-FactoryJson '经验库/通用技能库/索引.json' @{说明='原候选知识卡及派生索引授权待确认，不随包分发。查询零命中不代表经验复用系统失效。';total=0;entries=@()}
-foreach($category in @($policy.empty_knowledge_categories)){
+# ReleaseCandidate contains only the root index and approved cards. Deployment and internal test profiles create the empty local categories.
+$emptyCategories=@(if($Profile -ne 'ReleaseCandidate'){$policy.empty_knowledge_categories})
+New-FactoryJson '经验库/通用技能库/索引.json' @{说明='本机候选卡索引，出厂为空。随包软件参考由 skill_search 单独读取。';total=0;entries=@()}
+foreach($category in $emptyCategories){
   if($category -notmatch '^\d\d_[^\\/.:]+$' -or $category -eq '00_索引'){throw '空分类目录非法'}
   New-FactoryJson ('经验库/通用技能库/'+$category+'/索引.json') @{说明='用户本地候选方法；出厂为空';count=0;entries=@()}
 }
-if($Profile -ne 'ReleaseCandidate'){New-FactoryJson '包信息.json' @{schema=2;stage=$Profile;status='TEST_COPY_NOT_FOR_UPLOAD';license='MIT';factory_data=$true;knowledge='EMPTY_WITHHELD_CONTENT_EXCLUDED';release_blocked=$true}}
-foreach($category in @($policy.empty_knowledge_categories)){
+if($Profile -ne 'ReleaseCandidate'){New-FactoryJson '包信息.json' @{schema=2;stage=$Profile;status='TEST_COPY_NOT_FOR_UPLOAD';license='MIT';factory_data=$true;knowledge='PUBLIC_SOFTWARE_REFERENCE_LOCAL_EMPTY';release_blocked=$true}}
+foreach($category in $emptyCategories){
   $empty=Get-Content -LiteralPath (Join-Path $target ('经验库/通用技能库/'+$category+'/索引.json')) -Raw -Encoding UTF8|ConvertFrom-Json
   if(@($empty.entries).Count -ne 0 -or $empty.count -ne 0){throw 'FACTORY_DATA_NOT_EMPTY'}
 }
