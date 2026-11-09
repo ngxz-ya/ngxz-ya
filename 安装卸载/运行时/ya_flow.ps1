@@ -606,13 +606,17 @@ function Format-YaOverview([string]$Lib) {
 }
 
 function Get-YaSlotUsage([string]$Lib, [string]$SlotId) {
-  $ov = Get-YaOverview $Lib
+  if(-not [IO.File]::Exists((Join-Path $Lib '消耗.json'))){return @{calls=0;token='未统计'}}
+  $usage=Read-YaUsage $Lib
   if ($SlotId -eq 'all') {
-    $token = '未统计'
-    if ([int]$ov.token_known -gt 0) { $token = [string]$ov.sum_token }
-    return @{ calls = $ov.sum_calls; token = $token }
+    $calls=0;$total=0;$known=$false
+    foreach($s in $usage.slots){
+      $calls+=[int]$s.calls
+      if($null -ne $s.token){$total+=[int]$s.token;$known=$true}
+    }
+    return @{calls=$calls;token=$(if($known){[string]$total}else{'未统计'})}
   }
-  foreach ($s in (Get-YaItems $ov.slots)) {
+  foreach ($s in $usage.slots) {
     if ([string]$s.id -eq $SlotId) {
       return @{ calls = [int]$s.calls; token = (Format-YaToken $s.token) }
     }

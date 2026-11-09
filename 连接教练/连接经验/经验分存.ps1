@@ -222,8 +222,10 @@ try {
           $line = ConvertTo-Json -InputObject $en -Compress -Depth 4
           if (-not (Hit $line)) { continue }
           if (Test-YaIndexContentDirty $en $slot) { $skipped++; continue }
+          $recordFile=Get-YaFormalFile $sd ([string]$en.id)
+          if(-not $recordFile -or (Read-YaJsonFile $recordFile).lifecycle -eq 'withdrawn'){continue}
           $n++
-          if ($n -le $max) { Write-Output ('专属正式 ' + (Show-Slot ([string]$en.id)) + ' ' + (Format-YaShown ([string]$en.t)) + '  get: ya.ps1 exp_get id=' + (Show-Slot ([string]$en.id)) + ' slot=' + (Show-Slot $slot)) }
+          if ($n -le $max) { Write-Output ('专属记录（需核对版本与证据） ' + (Show-Slot ([string]$en.id)) + ' ' + (Format-YaShown ([string]$en.t)) + '  get: ya.ps1 exp_get id=' + (Show-Slot ([string]$en.id)) + ' slot=' + (Show-Slot $slot)) }
         }
         foreach ($df in @(Get-ChildItem -LiteralPath (Join-Path $sd '_草稿') -Recurse -Filter *.json -File -ErrorAction SilentlyContinue)) { $txt = [IO.File]::ReadAllText($df.FullName, [Text.Encoding]::UTF8); if (Hit $txt) { $n++; if ($n -le $max) { $o = $null; try { $o = $txt | ConvertFrom-Json } catch { $o = $null }; $shownT = ''; if ($null -ne $o) { $shownT = Format-YaShown ([string]$o.t) }; Write-Output ('专属草稿 ' + (Show-Slot $df.BaseName) + ' ' + $shownT + '  （v=0 未验证，照做也要读回核对）  file: ' + (Show-OutPath ($df.FullName.Substring($pkg.Length + 1)))) } } }
         Write-Output ('hits_专属: ' + $n)
@@ -248,14 +250,14 @@ try {
     else { Write-Output 'hits_专属: 未指定软件槽（没连软件时只搜通用）' }
     $gn = 0
     $gd = Join-Path $lib '槽\generic'
-    foreach ($en in @((Read-YaJsonFile (Join-Path $gd '索引.json')).entries)) {
+    if($slot -eq 'generic'){foreach ($en in @((Read-YaJsonFile (Join-Path $gd '索引.json')).entries)) {
       if ($null -eq $en) { continue }
       $line = ConvertTo-Json -InputObject $en -Compress -Depth 4
       if (-not (Hit $line)) { continue }
       if (Test-YaIndexContentDirty $en 'generic') { $skipped++; continue }
       $gn++
-      if ($gn -le $max) { Write-Output ('通用正式 ' + (Show-Slot ([string]$en.id)) + ' ' + (Format-YaShown ([string]$en.t))) }
-    }
+      if ($gn -le $max) { Write-Output ('未指定软件的记录 ' + (Show-Slot ([string]$en.id)) + ' ' + (Format-YaShown ([string]$en.t))) }
+    }}
     foreach ($l in [IO.File]::ReadAllLines((Join-Path $skillLib '索引.json'), [Text.Encoding]::UTF8)) {
       if (-not $l.StartsWith('{"id"')) { continue }
       if (-not (Hit $l)) { continue }
@@ -267,7 +269,7 @@ try {
     Write-Output ('hits_通用: ' + $gn)
     $total += $gn
     $others = 0; $allSlots = Get-YaItems (Read-YaSlots $lib).slots; foreach ($s in $allSlots) { if ([string]$s.id -ne 'generic' -and [string]$s.id -ne $slot) { $others++ } }
-    Write-Output ('scope: 专属 ' + $(if ($slot -and $slot -ne 'generic') { Show-Slot $slot } else { '(无)' }) + ' + 通用；没读其他软件槽 ' + $others + ' 个（不整库通搜）')
+    Write-Output ('scope: 专属 ' + $(if ($slot -and $slot -ne 'generic') { Show-Slot $slot } else { '(无)' }) + ' + 通用知识候选；没读其他软件槽 ' + $others + ' 个（不整库通搜）')
     if ($skipped -gt 0) { Write-Output ('note: 有 ' + $skipped + ' 条含禁止写入的词，没有列出来。') }
     Write-Output ('hits: ' + $total)
     Write-Output 'note: 只读，不记调用、不开检索闸；要写草稿仍须 ya.ps1 task_open + exp_recall slot=<本槽>。'

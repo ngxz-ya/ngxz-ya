@@ -42,13 +42,18 @@ try {
   $proof=[YaEvidence]::Read((Join-Path ([YaEvidence]::Work($pkg,$c.slot)) ($link['session']+'\readback.json')))
   $message=New-Object 'Collections.Generic.Dictionary[string,object]'
   foreach($pair in @{protocol='ngxz-ya/frontend-task/1';action=$Action;request=$c.request;nonce=$c.nonce}.GetEnumerator()){$message[$pair.Key]=$pair.Value}
-  if($Action -eq 'Execute'){$message['parameters']=$c.plan.parameters;$message['steps']=@($c.plan.steps);$message['output_path']=$model}
+  $message['parameters']=$c.plan.parameters;$message['steps']=@($c.plan.steps);$message['output_path']=$model
+  if($Action -eq 'Execute'){
+   $checked=[YaEvidence]::Read((Join-Path $c.directory 'Check.json'))
+   if($checked['document_id']){$message['document_id']=$checked['document_id'];$message['document_path']=$checked['document_path']}
+  }
   $message=[System.Web.Script.Serialization.JavaScriptSerializer]::new().DeserializeObject((ConvertTo-Json -InputObject $message -Depth 30 -Compress))
   $budget=[Math]::Max(1000,([int]$c.timeout_seconds*1000)-5000)
   $result=[YaEvidence]::SendMessage([string]$proof['probe_pipe'],[int]$link['pid'],[string]$link['process_start'],$message,$budget)
   if($result['ok'] -ne $true -or $result['software_version'] -cne $c.software_version -or $result['bridge_sha256'] -cne $f.bridge_sha256){throw ('FRONTEND_REPLY_FAILED: '+[string]$result['error'])}
   if($Action -eq 'Check' -and $result['status'] -cne 'READY'){throw 'FRONTEND_NOT_READY'}
   if($Action -eq 'Execute'){
+   if($checked['document_id'] -and ($result['document_id'] -cne $checked['document_id'] -or $result['document_path'] -cne $checked['document_path'])){throw 'FRONTEND_DOCUMENT_CHANGED'}
    if($result['status'] -cne 'EXECUTED' -or [string]$result['saved_file'] -ine $model -or -not [IO.File]::Exists($model) -or (Get-Item -LiteralPath $model).Length -eq 0){throw 'SOFTWARE_SAVE_REQUIRED'}
    $result['saved_sha256']=(Get-FileHash -LiteralPath $model).Hash
   }

@@ -12,12 +12,13 @@ $old = @{}; foreach ($n in $names) { $old[$n] = [Environment]::GetEnvironmentVar
 try {
   try { $runtimeHeld = $runtimeLock.WaitOne(10000) } catch [Threading.AbandonedMutexException] { $runtimeHeld = $true }
   if (-not $runtimeHeld) { throw '本包任务或经验正在更新，请稍后再试' }
-  if(Get-Command Assert-YaOperation -ErrorAction SilentlyContinue){Assert-YaOperation $pkg}
+  $readOnly=$Rest[0] -in @('exp_search','exp_get','skill_search','skill_get')
+  if(-not $readOnly -and (Get-Command Assert-YaOperation -ErrorAction SilentlyContinue)){Assert-YaOperation $pkg}
   $env:YALINK_PACKAGE = $pkg
   $env:YALINK_HUD_HOME = Get-YaPackageHudHome $pkg
   $io = Join-Path $env:YALINK_HUD_HOME 'io'
   $file = Join-Path $io 'link.json'
-  if (Test-Path -LiteralPath $file) {
+  if (-not $readOnly -and (Test-Path -LiteralPath $file)) {
     try {
       $link = [YaEvidence]::Read($file)
       if ($link['state'] -eq 'ok' -and [YaEvidence]::CheckRegistered($pkg, $io, $link)) {
@@ -30,10 +31,11 @@ try {
   $taskBefore=$null
   if(Test-Path -LiteralPath $flowFile){$taskBefore=(Get-Content -LiteralPath $flowFile -Raw -Encoding UTF8|ConvertFrom-Json).current}
   $started = [DateTime]::UtcNow
-  $lines = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '安装卸载\运行时\ya.ps1') @Rest)
+  $runtime=Join-Path $pkg '安装卸载\运行时\ya.ps1'
+  $lines = if($readOnly){@(& $runtime @Rest)}else{@(& powershell -NoProfile -ExecutionPolicy Bypass -File $runtime @Rest)}
   $result = $LASTEXITCODE
   $lines | Write-Output
-  if (Get-Command Add-YaActualEvent -ErrorAction SilentlyContinue) {
+  if (-not $readOnly -and (Get-Command Add-YaActualEvent -ErrorAction SilentlyContinue)) {
     $flow = Get-Content -LiteralPath (Join-Path $pkg '经验库\流程.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $eventTask=$flow.current
     if(-not $eventTask -and $taskBefore){

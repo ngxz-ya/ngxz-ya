@@ -68,8 +68,11 @@ function Assert-YaOperation([string]$Package) {
   if(Test-Path -LiteralPath $guard){
     $ref=Get-Content -LiteralPath $guard -Raw -Encoding UTF8|ConvertFrom-Json
     $state=Get-Content -LiteralPath $ref.state_file -Raw -Encoding UTF8|ConvertFrom-Json
-    if(-not $ref.request -or $state.request -cne $ref.request -or $state.status -ne 'completed'){throw 'RECOVERY_REQUIRED: original request is incomplete; editing operation.json cannot resolve it.'}
+    if(-not $ref.request -or $state.request -cne $ref.request){throw 'RECOVERY_REQUIRED: request identity mismatch'}
+    if($state.status -ceq 'prepared' -and $state.dispatch_schema -eq 1 -and
+       (-not $op -or $op.status -eq 'completed' -or $op.request -ceq $state.request)){return}
     Assert-YaCompletedRequest $ref.state_file
+    if($op.request -ceq $state.request){return}
   }
   if(-not $op -or $op.status -eq 'completed'){return}
   throw 'RECOVERY_REQUIRED: package operation is pending/blocked; inspect operation.json and software state before any write or retry.'

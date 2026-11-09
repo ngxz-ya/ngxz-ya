@@ -239,7 +239,7 @@ function Initialize-YaLibrary([string]$Root) {
   return $lib
 }
 
-function Resolve-YaSlot([string]$Lib, [string]$Id) {
+function Resolve-YaSlot([string]$Lib, [string]$Id, [switch]$ReadOnly) {
   $cfg = Read-YaSlots $Lib
   if (-not $Id) { $Id = Get-YaTextProp $cfg 'active' }
   $found = $null
@@ -247,7 +247,7 @@ function Resolve-YaSlot([string]$Lib, [string]$Id) {
     if ([string]$s.id -eq $Id) { $found = $s; break }
   }
   if (-not $found) { throw ('没有这个槽: ' + (Format-YaShownId $Id) + '。先看 slot_list，或用 slot_add 新建。') }
-  $dir = Initialize-YaSlot $Lib $found
+  $dir = if($ReadOnly){Get-YaSlotDir $Lib $found}else{Initialize-YaSlot $Lib $found}
   return @{ cfg = $cfg; slot = $found; dir = $dir; id = [string]$found.id }
 }
 
@@ -306,18 +306,7 @@ function Write-YaIndex([string]$SlotDir, [string]$Note, $Entries) {
 }
 
 function Get-YaHay($Entry) {
-  $k = (ConvertTo-YaKeywordList $Entry.k) -join ' '
-  $tags = (ConvertTo-YaKeywordList $Entry.tags) -join ' '
-  $bits = @(
-    (Get-YaTextProp $Entry 'id'),
-    (Get-YaTextProp $Entry 'c'),
-    (Get-YaTextProp $Entry 't'),
-    (Get-YaTextProp $Entry 'm'),
-    (Get-YaTextProp $Entry 'sw'),
-    $k,
-    $tags
-  )
-  return (($bits | Where-Object { $_ }) -join ' ')
+  return ((@($Entry.id,$Entry.c,$Entry.t,$Entry.m,$Entry.sw)+@($Entry.k)+@($Entry.tags)) -join ' ')
 }
 
 function Search-YaEntries($Entries, [string]$Q) {
@@ -325,10 +314,10 @@ function Search-YaEntries($Entries, [string]$Q) {
   $hits = New-Object System.Collections.Generic.List[object]
   foreach ($e in (Get-YaItems $Entries)) {
     if ($tokens.Count -eq 0) { [void]$hits.Add($e); continue }
-    $hay = (Get-YaHay $e).ToLowerInvariant()
+    $hay = Get-YaHay $e
     $ok = $true
     foreach ($t in $tokens) {
-      if ($hay.IndexOf($t.ToLowerInvariant()) -lt 0) { $ok = $false; break }
+      if ($hay.IndexOf($t,[StringComparison]::OrdinalIgnoreCase) -lt 0) { $ok = $false; break }
     }
     if ($ok) { [void]$hits.Add($e) }
   }
@@ -1315,17 +1304,16 @@ function Search-YaDual {
   }
   Assert-YaClean $query
   Assert-YaClean $tag
-  Rebuild-YaTagIndex $Lib | Out-Null
   $chosen = New-Object System.Collections.Generic.List[object]
   if (Test-YaCrossSlotWord $SlotId) {
     $cfg = Read-YaSlots $Lib
     foreach ($s in (Get-YaItems $cfg.slots)) {
       if (Test-YaCrossSlotWord ([string]$s.id)) { continue }
-      $dir = Initialize-YaSlot $Lib $s
+      $dir = Get-YaSlotDir $Lib $s
       [void]$chosen.Add(@{ id = [string]$s.id; dir = $dir })
     }
   } else {
-    $resolved = Resolve-YaSlot $Lib $SlotId
+    $resolved = Resolve-YaSlot $Lib $SlotId -ReadOnly
     [void]$chosen.Add(@{ id = $resolved.id; dir = $resolved.dir })
   }
   $hits = New-Object System.Collections.Generic.List[object]

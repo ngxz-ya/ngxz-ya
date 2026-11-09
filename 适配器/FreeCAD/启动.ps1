@@ -77,9 +77,11 @@ if(Test-Path -LiteralPath $linkPath){
   if([YaEvidence]::HasFrontendAcceptance($package,$io,$link)){
    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $package 'YA插件\show_ya.ps1') -WithSoftware
    if($LASTEXITCODE){exit $LASTEXITCODE}
-   @{status='CONNECTED_INTERACTIVE';live_link=$true;reused_session=$true;next='用 Run 和任务文件修改当前模型'}|ConvertTo-Json
+   @{status='CONNECTED_INTERACTIVE';live_link=$true;software_visible=$true;hud_visible=$true;task_verified=$true;reused_session=$true;next='用 Run 和任务文件修改当前模型'}|ConvertTo-Json
    exit 0
   }
+  @{status='CHANNEL_VERIFIED_AWAITING_ACCEPTANCE';live_link=$true;software_visible=$null;hud_visible=$null;task_verified=$false;pid=$link['pid'];next='保留此实例。用 Diagnose 检查显示，之后用 Connect 验收或复验已完成的原请求。'}|ConvertTo-Json
+  exit 0
  }
 }
 if(Test-Path -LiteralPath $pending){
@@ -141,7 +143,8 @@ if($existing.Count){
  [IO.File]::WriteAllText($driverFile,$driver,[Text.UTF8Encoding]::new($true))
  [IO.File]::Copy((Join-Path $PSScriptRoot 'read.ps1'),$readerFile,$false)
 Write-YaAtomic (Join-Path $local 'freecad.json') @{reader=$cmd;reader_sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'reader.py')).Hash}
-Write-YaAtomic (Join-Path $local '方法.json') @{schema=1;software='FreeCAD';software_version=$version;interface='FreeCAD Python / frontend-task/1';mode='interactive';status='reviewed';sources=@('https://github.com/FreeCAD/FreeCAD/releases/tag/1.1.4','ngxz-ya bundled connector');license_review='Original connector and separately downloaded upstream software';safety_review='Dedicated document, bounded dimensions and local user-only channel';driver='driver.ps1';driver_sha256=(Get-FileHash -LiteralPath $driverFile).Hash;frontend=@{bridge_sha256=$bridgeHash;reader='verify.ps1';reader_sha256=(Get-FileHash -LiteralPath $readerFile).Hash;extension='fcstd'}}
+ $dependencies=@($driverFile,$readerFile,(Join-Path $local 'freecad.json'),$cmd,$gui,(Join-Path $PSScriptRoot 'reader.py'),(Join-Path $package '适配器\前台驱动.ps1'),(Join-Path $package '适配器\运行工具.ps1')) | ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash}}
+Write-YaAtomic (Join-Path $local '方法.json') @{schema=1;dependencies=@($dependencies);software='FreeCAD';software_version=$version;interface='FreeCAD Python / frontend-task/1';mode='interactive';status='reviewed';sources=@('https://github.com/FreeCAD/FreeCAD/releases/tag/1.1.4','ngxz-ya bundled connector');license_review='Original connector and separately downloaded upstream software';safety_review='Dedicated document, bounded dimensions and local user-only channel';driver='driver.ps1';driver_sha256=(Get-FileHash -LiteralPath $driverFile).Hash;frontend=@{bridge_sha256=$bridgeHash;reader='verify.ps1';reader_sha256=(Get-FileHash -LiteralPath $readerFile).Hash;extension='fcstd'}}
 }
 $id=[guid]::NewGuid().ToString('N')
 $session=Join-Path $tools $id

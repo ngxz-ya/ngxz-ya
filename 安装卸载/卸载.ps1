@@ -16,6 +16,7 @@ function Test-YaSafeHome([string]$Dir) {
     [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'YALink')).TrimEnd('\'),
     [IO.Path]::GetFullPath((Join-Path $env:ProgramData 'YALink')).TrimEnd('\')
   )
+  if($localInstall -and $full -ieq $localInstall){return $true}
   foreach ($one in $allowed) { if ($full -ieq $one) { return $true } }
   if($PackageOnly){foreach($one in $allowed){if($full -ieq (Join-Path $one ('packages\'+$packageIdentity))){return $true}}}
   return $false
@@ -30,7 +31,8 @@ if($PackageOnly){
   $packageRoot=Split-Path $PSScriptRoot -Parent
   . (Join-Path $packageRoot 'YA插件\连接上下文.ps1')
   $packageIdentity=[YaEvidence]::Identity($packageRoot)
-  $candidates=@($candidates|ForEach-Object{Join-Path $_ ('packages\'+$packageIdentity)})
+  $localInstall=Join-Path (Get-YaPackageHudHome $packageRoot) '安装'
+  $candidates=@($localInstall)+@($candidates|ForEach-Object{Join-Path $_ ('packages\'+$packageIdentity)})
 }
 foreach ($c in $candidates) {
   if (Test-Path -LiteralPath (Join-Path $c 'install_state.json')) { $yaDir = $c; break }

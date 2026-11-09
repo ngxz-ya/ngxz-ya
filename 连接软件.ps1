@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$Software,[ValidateSet('Check','Run','Diagnose','Connect')][string]$Action='Check',[string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120,[switch]$AllowBatch,[switch]$ShowPanel)
+﻿param([Parameter(Mandatory=$true)][string]$Software,[ValidateSet('Check','Run','Diagnose','Connect','Reconcile')][string]$Action='Check',[string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120,[switch]$AllowBatch,[switch]$ShowPanel)
 $ErrorActionPreference='Stop'
 $pkg=$PSScriptRoot
 try{
@@ -14,6 +14,63 @@ try{
  . (Join-Path $pkg 'YA插件\真实记录.ps1')
  Assert-YaIsolatedPackage $pkg
  $operation=Join-Path (Get-YaPackageHudHome $pkg) 'operation.json'
+ if($Action -eq 'Reconcile'){
+  $guard=[Threading.Mutex]::new($false,('Local\YASoftwareOperation-'+[YaEvidence]::Identity($pkg)))
+  $held=$false
+  try{
+   try{$held=$guard.WaitOne(0)}catch [Threading.AbandonedMutexException]{$held=$true}
+   if(-not $held){throw 'BUSY: original task is still running'}
+   $homeDir=Get-YaPackageHudHome $pkg
+   $ref=Get-Content -LiteralPath (Join-Path $homeDir 'operation_request.json') -Raw -Encoding UTF8|ConvertFrom-Json
+   $state=Get-Content -LiteralPath $ref.state_file -Raw -Encoding UTF8|ConvertFrom-Json
+   $job=Split-Path $ref.state_file -Parent
+   if($ref.request -cnotmatch '^[a-f0-9]{32}$' -or $state.request -cne $ref.request -or (Split-Path $job -Leaf) -cne $ref.request){throw 'RECOVERY_REQUEST_MISMATCH'}
+   $context=Get-Content -LiteralPath (Join-Path $job 'task.json') -Raw -Encoding UTF8|ConvertFrom-Json
+   if($context.software -ine $Software -or $context.request -cne $ref.request -or $context.slot -cnotmatch '^[a-z][a-z0-9_-]{0,31}$' -or
+     $job -ine (Join-Path ([YaEvidence]::Work($pkg,$context.slot)) $ref.request)){throw 'RECOVERY_TARGET_MISMATCH'}
+   $status='EXECUTION_UNKNOWN'
+   $receipts=@{}
+   foreach($name in @('Execute','Verify')){
+    $file=Join-Path $job ($name+'.json')
+    if(Test-Path -LiteralPath $file){
+     $receipt=Get-Content -LiteralPath $file -Raw -Encoding UTF8|ConvertFrom-Json
+     if($receipt.request -ceq $ref.request -and $receipt.nonce -ceq $context.nonce -and $receipt.software_version -ceq $context.software_version){$receipts[$name]=$receipt}
+    }
+   }
+   if($state.status -ceq 'completed'){
+    Assert-YaCompletedRequest $ref.state_file
+    $status=if($state.mode -ceq 'simulation'){'SIMULATED_COMPLETED'}else{'VERIFIED_COMPLETED'}
+   }
+   elseif($state.status -ceq 'prepared' -and $state.dispatch_schema -eq 1){$status='NOT_DISPATCHED'}
+   elseif($receipts.Execute.status -ceq 'EXECUTED'){
+    $status='EXECUTED_AWAITING_VERIFICATION'
+    $verifiedFile=Join-Path $job 'verification.json'
+    if($receipts.Verify.status -ceq 'READBACK' -and [IO.File]::Exists($verifiedFile)){
+     $evidence=Get-Content -LiteralPath $verifiedFile -Raw -Encoding UTF8|ConvertFrom-Json
+     if($evidence.request -ceq $ref.request -and $evidence.nonce -ceq $context.nonce -and
+        $evidence.mode -ne 'simulation' -and $evidence.verify_sha256 -ceq [YaEvidence]::Hash((Join-Path $job 'Verify.json')) -and
+        @($evidence.artifacts).Count -gt 0 -and -not @($evidence.artifacts|Where-Object {
+         -not $_.path -or -not [IO.Path]::GetFullPath($_.path).StartsWith($job+'\',[StringComparison]::OrdinalIgnoreCase) -or
+         -not [IO.File]::Exists($_.path) -or [YaEvidence]::Hash($_.path) -cne $_.sha256
+        }).Count){$status='VERIFIED_AWAITING_RECORD'}
+    }
+   }
+   $session=$null;$channel=$null
+   $binding=Join-Path $job 'frontend-session.json'
+   if(Test-Path -LiteralPath $binding){
+    $session=Get-Content -LiteralPath $binding -Raw -Encoding UTF8|ConvertFrom-Json
+    try{
+     $io=Join-Path $homeDir 'io'
+     $active=[YaEvidence]::Read((Join-Path $io 'link.json'))
+     $channel=($session.session -ceq $active['session'] -and [string]$session.pid -ceq [string]$active['pid'] -and
+       $session.process_start -ceq $active['process_start'] -and -not [YaEvidence]::CheckCommandChannel($pkg,$io,$active))
+    }catch{$channel=$false}
+   }
+   @{status=$status;request=$ref.request;evidence=$job;receipts=$receipts;session=$session;channel_available=$channel;
+     next='保留原请求。执行未知或尚未核验时，先在原软件实例只读检查文档和产物，不重放命令。'}|ConvertTo-Json -Depth 12
+   exit 0
+  }finally{if($held){$guard.ReleaseMutex()};$guard.Dispose()}
+ }
  if($Action -eq 'Diagnose'){
   $state=if(Test-Path -LiteralPath $operation){Get-Content -LiteralPath $operation -Raw -Encoding UTF8|ConvertFrom-Json}else{$null}
   $quick=$null;$ref=Join-Path (Get-YaPackageHudHome $pkg) 'quick_request.json'
@@ -88,33 +145,45 @@ try{
    readback_sha256=$link['readback_sha256'];request=$RequestId;state_sha256=[YaEvidence]::Hash($stateFile)
    verify_sha256=[YaEvidence]::Hash((Join-Path $job 'Verify.json'))
   }
-  @{status='CONNECTED_INTERACTIVE';software=$Software;request=$RequestId;live_link=$true;frontend_pid=$link['pid'];process_start=$link['process_start'];hud_visible=$true}|ConvertTo-Json
+  @{status='CONNECTED_INTERACTIVE';software=$Software;request=$RequestId;live_link=$true;frontend_pid=$link['pid'];process_start=$link['process_start'];channel_available=$true;software_visible=$true;task_verified=$true;hud_visible=$true}|ConvertTo-Json
   exit 0
  }
  # A checked, accepted live session can be handed to the next Agent without rediscovery.
  $io=Join-Path (Get-YaPackageHudHome $pkg) 'io'
  $linkFile=Join-Path $io 'link.json'
- $accepted=$false
+ $accepted=$false;$channelAvailable=$null
  if(Test-Path -LiteralPath $linkFile){
   try{
    $link=[YaEvidence]::Read($linkFile)
-   $accepted=($link['slot'] -ceq $slot -and $link['soft'] -ieq $Software -and
-    -not [YaEvidence]::CheckCommandChannel($pkg,$io,$link) -and [YaEvidence]::HasFrontendAcceptance($pkg,$io,$link))
+   $channelAvailable=($link['slot'] -ceq $slot -and $link['soft'] -ieq $Software -and
+     -not [YaEvidence]::CheckCommandChannel($pkg,$io,$link))
+   $accepted=($channelAvailable -and [YaEvidence]::HasFrontendAcceptance($pkg,$io,$link))
   }catch{}
  }
  $hudVisible=$null
+ $softwareVisible=$null
+ if($channelAvailable -and [YaWindow]::Desktop() -ceq 'WinSta0\Default'){
+  try{
+   $process=Get-Process -Id ([int]$link['pid']) -ErrorAction Stop
+   $softwareVisible=($process.StartTime.ToUniversalTime().Ticks.ToString() -ceq $link['process_start'] -and
+     [YaWindow]::InputVisible($process.Id,[YaWindow]::Find($process.Id).ToInt64()))
+  }catch{$softwareVisible=$false}
+ }
  if($ShowPanel){
   $panelArgs=@()
   if($accepted){$panelArgs+='-WithSoftware'}
   & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg 'YA插件\show_ya.ps1') @panelArgs
   $hudVisible=($LASTEXITCODE -eq 0)
+  if($accepted -and $hudVisible){$softwareVisible=$true}
  }
  if($accepted){
-  @{status=$(if($hudVisible -eq $false){'HUD_NOT_VISIBLE'}else{'CONNECTED_INTERACTIVE'});software=$Software;slot=$slot;workspace=$pkg
-    connected=($hudVisible -ne $false);live_link=$true;frontend_pid=$link['pid'];hud_visible=$hudVisible;reused_session=$true
-    next=$(if($hudVisible -eq $false){'保留当前模型，只复验 YA 显示'}else{'用 Run -TaskFile 在当前窗口执行下一任务'})}|ConvertTo-Json
+  $connected=($hudVisible -eq $true -and $softwareVisible -eq $true)
+  @{status=$(if($connected){'CONNECTED_INTERACTIVE'}elseif($null -eq $hudVisible){'CHANNEL_VERIFIED_VISIBILITY_UNCHECKED'}else{'HUD_NOT_VISIBLE'});software=$Software;slot=$slot;workspace=$pkg
+    connected=$connected;live_link=$true;channel_available=$true;task_verified=$true;frontend_pid=$link['pid'];software_visible=$softwareVisible;hud_visible=$hudVisible;reused_session=$true
+    next=$(if(-not $connected){'保留当前模型，只复验软件和 YA 显示'}else{'用 Run -TaskFile 在当前窗口执行下一任务'})}|ConvertTo-Json
   if($hudVisible -eq $false){exit 1};exit 0
  }
+ $catalog=Get-Content -LiteralPath (Join-Path $pkg '适配器\索引.json') -Raw -Encoding UTF8|ConvertFrom-Json
  $candidates=@()
  $versionCandidates=@()
  $nameParts=@($Software -split '[\s._-]+|(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])' | Where-Object {$_})
@@ -135,7 +204,11 @@ try{
  if($LASTEXITCODE){throw 'EXPERIENCE_SEARCH_FAILED'}
  $method=Join-Path $pkg ('连接教练\连接经验\'+$slot+'\方法.json')
  $hasMethod=Test-Path -LiteralPath $method
- $frontend=@{stage='FRONTEND_ADAPTER_MISSING';next='先确认目标软件窗口能就绪，再按通用接入指南查适用的前台接口和只读探针'}
+ $bundledMethods=@($catalog.adapters | Where-Object {$_.software -ieq $Software})
+ $frontend=@{stage='FRONTEND_ADAPTER_MISSING';next='先定位当前窗口并核对实际版本，优先查看本包工作区内已验证的接入经验；没有适用记录时再按通用接入指南做只读探针'}
+ if(-not $hasMethod -and $bundledMethods.Count){
+  $frontend=@{stage='BUNDLED_METHOD_RECHECK_REQUIRED';next='先读随包工法并核对本机版本与启动条件；适用才采用。独立示例不能自动替换用户指定的实例。'}
+ }
  if($hasMethod){
   try{
    $localMethod=Get-Content -LiteralPath $method -Raw -Encoding UTF8|ConvertFrom-Json
@@ -147,10 +220,10 @@ try{
   }catch{$frontend.next='现有方法文件无法读取，保留文件并检查格式'}
  }
  @{
-  status=$(if($hasMethod){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'})
+  status=$(if($hasMethod -or $bundledMethods.Count){'METHOD_AVAILABLE_RECHECK_REQUIRED'}else{'METHOD_RESEARCH_REQUIRED'})
   software=$Software;slot=$slot;workspace=$pkg;hud_visible=$hudVisible;installation_candidates=$candidates;version_only_candidates=$versionCandidates
   installation_next='名称匹配和版本匹配都是候选。先核对候选安装目录中实际可执行文件的产品名与版本，只有版本相同时不得据此启动或登记'
-  method=$method;frontend=$frontend;connected=$false;live_link=$false
+  method=$method;bundled_methods=$bundledMethods;frontend=$frontend;connected=$false;live_link=($channelAvailable -eq $true);channel_available=$channelAvailable;software_visible=$softwareVisible;task_verified=$false
   connection_acceptance='Connect -TaskFile <本次任务JSON>'
   guide='连接教练/通用接入指南.md';next=$frontend.next
   token='未统计（除非另接真实用量源）';savings='待对照'

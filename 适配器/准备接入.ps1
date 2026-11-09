@@ -65,7 +65,7 @@ try{
     if(-not $taskId){throw 'TASK_ID_MISSING: preserve generated files and inspect task output'}
     $searched=@(& powershell -NoProfile -ExecutionPolicy Bypass -File $entry exp_recall ('slot='+$slot) ('task='+$taskId) q=连接)
     if($LASTEXITCODE){throw ('EXPERIENCE_SEARCH_FAILED: '+($searched -join "`n"))}
-    $general=@(& powershell -NoProfile -ExecutionPolicy Bypass -File $entry exp_search slot=generic q=连接)
+    $general=@(& powershell -NoProfile -ExecutionPolicy Bypass -File $entry skill_search q=连接)
     if($LASTEXITCODE){throw ('GENERAL_SEARCH_FAILED: '+($general -join "`n"))}
   }
   @{status='SCAFFOLD_CHECKED_NOT_CONNECTED';slot=$slot;local=$local;task=$taskId;files=$files;next='Review the actual software API and reader implementation; complete method provenance and real tests. A draft is not a registered method or verified experience.'}|ConvertTo-Json -Depth 8

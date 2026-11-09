@@ -24,8 +24,24 @@ if($Action -eq 'Restore'){
   }
  }finally{$zip.Dispose()}
  [IO.Compression.ZipFile]::ExtractToDirectory($Archive,$Workspace)
- # Keep original evidence bytes and paths. Moving machines requires interface/evidence revalidation.
- [IO.File]::WriteAllText((Join-Path $Workspace '迁移待核验.json'),(@{source=$manifest.source;destination=$Workspace;note='原始证据字节未改；新环境须重新检查软件、接口和证据路径，不能直接宣称旧方法仍适用。'}|ConvertTo-Json),[Text.UTF8Encoding]::new($true))
+ # Archive live pointers separately. Historical request directories and original receipt bytes stay intact.
+ $stateHome=Join-Path $Workspace '工作区\运行状态'
+ $history=Join-Path $stateHome ('迁移历史\'+[guid]::NewGuid().ToString('N'))
+ foreach($name in @('operation.json','operation_request.json','quick_request.json','io\link.json','io\challenge.json','io\frontend-acceptance.json','io\hud_window.json')){
+  $oldPath=Join-Path $stateHome $name
+  if([IO.File]::Exists($oldPath)){
+   $newPath=Join-Path $history $name
+   [IO.Directory]::CreateDirectory((Split-Path $newPath -Parent))|Out-Null
+   [IO.File]::Move($oldPath,$newPath)
+  }
+ }
+ $mappingFile=Join-Path $Workspace '迁移待核验.json'
+ $origins=@($manifest.source)
+ if([IO.File]::Exists($mappingFile)){
+  $prior=Get-Content -LiteralPath $mappingFile -Raw -Encoding UTF8|ConvertFrom-Json
+  $origins+=@($prior.source)+@($prior.origins)
+ }
+ [IO.File]::WriteAllText($mappingFile,(@{source=$manifest.source;origins=@($origins|Where-Object {$_}|Select-Object -Unique);destination=$Workspace;note='证据按新路径重新核对哈希；活动软件和接口重新验证。'}|ConvertTo-Json),[Text.UTF8Encoding]::new($true))
  @{status='RESTORED_REVALIDATION_REQUIRED';workspace=$Workspace}|ConvertTo-Json;exit 0
 }
 if(Test-Path -LiteralPath $Archive){throw '备份文件已存在，拒绝覆盖'}
@@ -43,7 +59,7 @@ try{
  }
  Assert-YaOperation $runtime
  $filesByName=@{}
- foreach($name in @('工作区','成果','工作区说明.json','程序版本.json')){
+ foreach($name in @('工作区','成果','工作区说明.json','程序版本.json','迁移待核验.json')){
   $path=Join-Path $Workspace $name
   if(Test-Path -LiteralPath $path){
    foreach($item in @(Get-Item -LiteralPath $path)+@(Get-ChildItem -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue)){

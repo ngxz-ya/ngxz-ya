@@ -12,22 +12,29 @@ $identity=[Security.Cryptography.SHA256]::Create()
 try{$key=[BitConverter]::ToString($identity.ComputeHash([Text.Encoding]::UTF8.GetBytes($Workspace.ToLowerInvariant()))).Replace('-','')}finally{$identity.Dispose()}
 $lock=[Threading.Mutex]::new($false,('Local\YADeploy-'+$key));$held=$false
 try{
- $held=$lock.WaitOne(0);if(-not $held){throw 'BUSY: 此工作区正在部署'}
+ try{$held=$lock.WaitOne(0)}catch [Threading.AbandonedMutexException]{$held=$true}
+ if(-not $held){throw 'BUSY: 此工作区正在部署'}
+ if($Fresh -and (Test-Path -LiteralPath $Workspace)){throw 'FRESH_WORKSPACE_REQUIRED: 请使用不存在的新工作区'}
  $marker=Join-Path $Workspace '工作区说明.json'
  if(Test-Path -LiteralPath $Workspace){
   if(-not (Test-Path -LiteralPath $marker)){throw '目标目录已有用户文件，拒绝覆盖；请指定其他 Workspace'}
   $managed=Get-Content -LiteralPath $marker -Raw -Encoding UTF8|ConvertFrom-Json
   if($managed.product -cne 'ngxz-ya' -or $managed.schema -ne 1){throw '工作区标识不符'}
- }else{[IO.Directory]::CreateDirectory($Workspace)|Out-Null}
+ }else{
+  New-Item -ItemType Directory -Path $Workspace -ErrorAction Stop|Out-Null
+  [IO.File]::WriteAllText($marker,'{"schema":1,"product":"ngxz-ya","runtime":"工作区","state":"initializing"}',[Text.UTF8Encoding]::new($true))
+ }
  $policy=Get-Content -LiteralPath (Join-Path $source '发布允许清单.json') -Raw -Encoding UTF8|ConvertFrom-Json
  $sourceFiles=@($policy.files|ForEach-Object{@{file=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $source $_)).Hash}})
  $currentFile=Join-Path $Workspace '程序版本.json'
- $same=$false
+ $same=$false;$current=$null
+ $updateMarker=Join-Path $runtime '更新中.json'
+ $resume=Test-Path -LiteralPath $updateMarker
  if(Test-Path -LiteralPath $currentFile){
   $current=Get-Content -LiteralPath $currentFile -Raw -Encoding UTF8|ConvertFrom-Json
   $same=@($sourceFiles|Where-Object {$r=$_;@($current.files|Where-Object {$_.file -ceq $r.file -and $_.sha256 -ceq $r.sha256}).Count -ne 1 -or -not [IO.File]::Exists((Join-Path $runtime $r.file)) -or (Get-FileHash -LiteralPath (Join-Path $runtime $r.file)).Hash -cne $r.sha256}).Count -eq 0
  }
- if(-not $same){
+ if(-not $same -or $resume){
   $deployRecords=Join-Path $Workspace '部署记录'
   if(-not (Test-Path -LiteralPath $deployRecords)){
    $recordDir=[IO.Directory]::CreateDirectory($deployRecords)
@@ -41,12 +48,21 @@ try{
   $guard=$null;$softwareGuard=$null;$runtimeHeld=$false;$softwareHeld=$false
   try{
    if(Test-Path -LiteralPath $runtime){
-    . (Join-Path $runtime 'YA插件\连接上下文.ps1')
+    . (Join-Path $source 'YA插件\连接上下文.ps1')
     $guard=[Threading.Mutex]::new($false,('Local\YARuntime-'+[YaEvidence]::Identity($runtime)))
     $softwareGuard=[Threading.Mutex]::new($false,('Local\YASoftwareOperation-'+[YaEvidence]::Identity($runtime)))
-    $runtimeHeld=$guard.WaitOne(0);$softwareHeld=$softwareGuard.WaitOne(0)
+    try{$runtimeHeld=$guard.WaitOne(0)}catch [Threading.AbandonedMutexException]{$runtimeHeld=$true}
+    try{$softwareHeld=$softwareGuard.WaitOne(0)}catch [Threading.AbandonedMutexException]{$softwareHeld=$true}
     if(-not $runtimeHeld -or -not $softwareHeld){throw 'BUSY: 工作区任务尚在运行，不能升级'}
-    . (Join-Path $runtime 'YA插件\真实记录.ps1');Assert-YaOperation $runtime
+    . (Join-Path $source 'YA插件\真实记录.ps1')
+    if($resume){
+     $pendingUpdate=Get-Content -LiteralPath $updateMarker -Raw -Encoding UTF8|ConvertFrom-Json
+     if($pendingUpdate.schema -ne 1 -or @($pendingUpdate.files).Count -ne $sourceFiles.Count -or
+        @($sourceFiles|Where-Object {$row=$_;@($pendingUpdate.files|Where-Object {$_.file -ceq $row.file -and $_.sha256 -ceq $row.sha256}).Count -ne 1}).Count){
+      throw 'UPDATE_SOURCE_MISMATCH: 使用上次升级的同一份发布包继续'
+     }
+    }else{
+    Assert-YaOperation $runtime
     $oldStatus=Get-YaPackageHudHome $runtime
     $localStatus=Join-Path $runtime '运行状态'
     if($oldStatus -ine $localStatus -and (Test-Path -LiteralPath $oldStatus) -and -not (Test-Path -LiteralPath $localStatus)){
@@ -55,6 +71,14 @@ try{
     $backupDir=Join-Path $Workspace '备份';[IO.Directory]::CreateDirectory($backupDir)|Out-Null
     Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
     $backup=Join-Path $backupDir ('升级前程序-'+[guid]::NewGuid().ToString('N')+'.zip')
+    $owned=@($current.files|ForEach-Object {$_.file})
+    foreach($row in $sourceFiles){
+     $target=Join-Path $runtime $row.file
+     if((Test-Path -LiteralPath $target) -and $row.file -cnotin $owned -and
+        (-not [IO.File]::Exists($target) -or (Get-FileHash -LiteralPath $target).Hash -cne $row.sha256)){
+      throw ('UPDATE_FILE_NOT_OWNED: '+$row.file)
+     }
+    }
     # Only program files are replaced. Live task data and HUD logs stay in place.
     $zip=[IO.Compression.ZipFile]::Open($backup,[IO.Compression.ZipArchiveMode]::Create)
     try{
@@ -63,14 +87,16 @@ try{
       if([IO.File]::Exists($file)){[void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,$file,$row.file)}
      }
     }finally{$zip.Dispose()}
-    [IO.File]::WriteAllText((Join-Path $runtime '更新中.json'),'{"state":"updating"}',[Text.UTF8Encoding]::new($true))
+    Write-YaAtomic $updateMarker @{schema=1;state='updating';files=$sourceFiles;backup=$backup}
+    }
     # Only allowlisted program files are updated. Factory indices and all private records stay in place.
     foreach($row in $sourceFiles){
-     $target=Join-Path $runtime $row.file;[IO.Directory]::CreateDirectory((Split-Path $target -Parent))|Out-Null
+     $target=Join-Path $runtime $row.file
+     if([IO.File]::Exists($target) -and (Get-FileHash -LiteralPath $target).Hash -ceq $row.sha256){continue}
+     [IO.Directory]::CreateDirectory((Split-Path $target -Parent))|Out-Null
      $tmp=Join-Path (Split-Path $target -Parent) ([guid]::NewGuid().ToString('N')+'.tmp');[IO.File]::Copy((Join-Path $stage $row.file),$tmp,$false)
      if([IO.File]::Exists($target)){[IO.File]::Replace($tmp,$target,[NullString]::Value)}else{[IO.File]::Move($tmp,$target)}
     }
-    [IO.File]::Delete((Join-Path $runtime '更新中.json'))
    }else{
     if(-not $runtime.StartsWith($Workspace+'\',[StringComparison]::OrdinalIgnoreCase)){throw '目标越界'}
     Move-Item -LiteralPath $stage -Destination $runtime
@@ -78,6 +104,7 @@ try{
   }finally{if($runtimeHeld){$guard.ReleaseMutex()};if($softwareHeld){$softwareGuard.ReleaseMutex()};if($guard){$guard.Dispose()};if($softwareGuard){$softwareGuard.Dispose()}}
   [IO.File]::WriteAllText((Join-Path $runtime '包信息.json'),'{"schema":2,"stage":"UserWorkspace","product":"ngxz-ya"}',[Text.UTF8Encoding]::new($true))
   [IO.File]::WriteAllText($currentFile,(@{schema=1;files=$sourceFiles;updated_utc=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($true))
+  if([IO.File]::Exists($updateMarker)){[IO.File]::Delete($updateMarker)}
   if(Test-Path -LiteralPath $stage){
    $stagedCopy=Get-Item -LiteralPath $stage
    if($stagedCopy.PSIsContainer -and $stagedCopy.Parent.FullName -ieq $recordDir.FullName -and -not ($stagedCopy.Attributes -band [IO.FileAttributes]::ReparsePoint)){

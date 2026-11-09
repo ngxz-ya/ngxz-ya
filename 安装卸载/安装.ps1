@@ -21,12 +21,6 @@ function Read-State([string]$Path) {
   try { return ($raw | ConvertFrom-Json) } catch { return $null }
 }
 
-function Get-SafeHome {
-  $local = Join-Path $env:LOCALAPPDATA 'YALink'
-  if ($local -match '[^\x00-\x7F]') { return (Join-Path $env:ProgramData 'YALink') }
-  return $local
-}
-
 try {
   Say '=== YA 工具包 安装 ==='
   if (-not (Test-Path -LiteralPath (Join-Path $SrcRuntime 'ya.ps1'))) { throw ('缺少运行脚本: ' + $SrcRuntime) }
@@ -36,11 +30,9 @@ try {
   $lib = Initialize-YaLibrary $Package
   Say ('经验库: ' + $lib)
 
-  $yaDir = Get-SafeHome
-  if($PackageOnly){
-    . (Join-Path $Package 'YA插件\连接上下文.ps1')
-    $yaDir=Join-Path $yaDir ('packages\'+[YaEvidence]::Identity($Package))
-  }
+  . (Join-Path $Package 'YA插件\连接上下文.ps1')
+  $yaDir=Join-Path (Get-YaPackageHudHome $Package) '安装'
+  Say ('准备写入运行目录: '+$yaDir)
   if (-not (Test-Path -LiteralPath $yaDir)) { New-Item -ItemType Directory -Path $yaDir | Out-Null }
   Say ('运行目录: ' + $yaDir)
 
@@ -103,7 +95,10 @@ try {
     generated = $generated
     env       = $envRows
   }
-  Write-YaJsonFile $statePath $state
+  if(-not $old -or $old.version -ne 1 -or $old.home -ine $yaDir -or $old.package -ine $Package -or
+     $old.library -ine $lib -or ($old.copied -join ',') -cne ($copied -join ',') -or ($old.generated -join ',') -cne ($generated -join ',')){
+    Write-YaJsonFile $statePath $state
+  }
 
   Say '不探测、不修改任何机械软件，也不读取本机装了哪些软件。'
   Say ''
@@ -123,11 +118,7 @@ catch {
   Say ('ERROR: ' + $_.Exception.Message)
   Say 'RESULT: FAIL'
   try {
-    $yaDirTry = Get-SafeHome
-    if($PackageOnly){
-      . (Join-Path $Package 'YA插件\连接上下文.ps1')
-      $yaDirTry=Join-Path $yaDirTry ('packages\'+[YaEvidence]::Identity($Package))
-    }
+    $yaDirTry=$yaDir
     if (Test-Path -LiteralPath $yaDirTry) {
       $log | Set-Content -LiteralPath (Join-Path $yaDirTry 'install.log') -Encoding UTF8
     }

@@ -109,3 +109,7 @@
 !/适配器/FreeCAD/bridge.py
 !/适配器/FreeCAD/reader.py
 !/适配器/FreeCAD/说明.md
+!/测试/预检回归.ps1
+!/测试/检索回归.ps1
+!/测试/工作区回归.ps1
+!/测试/本地验收报告.md

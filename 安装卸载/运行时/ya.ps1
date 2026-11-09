@@ -304,7 +304,7 @@ function Format-YaMissingDraft([string]$Lib, [string]$SlotId, [string]$Id, [stri
 
 function Invoke-YaSearch([string]$Lib, $Map, [bool]$Recall) {
   $slotArg = Repair-YaLine (Get-YaArg $Map 'slot')
-  if (-not $slotArg) { $slotArg = (Resolve-YaSlot $Lib '').id }
+  if (-not $slotArg) { $slotArg = (Resolve-YaSlot $Lib '' -ReadOnly).id }
   if (Test-YaCrossSlotWord $slotArg) { $slotArg = 'all' }
   $query = Get-YaArg $Map 'q'
   $tag = Get-YaArg $Map 'tag'
@@ -323,25 +323,55 @@ function Invoke-YaSearch([string]$Lib, $Map, [bool]$Recall) {
     if (Test-YaIndexContentDirty $hit.entry ([string]$hit.slot)) { $skipped++; continue }
     [void]$clean.Add($hit)
   }
-  Mark-YaRecalled $Lib $slotArg $gateTag $query $clean.Count
+  if($Recall){Mark-YaRecalled $Lib $slotArg $gateTag $query $clean.Count}
   $usage = Get-YaSlotUsage $Lib $slotArg
   Write-Output ('slot: ' + (Format-YaShownId $slotArg))
   Write-Output ('query: ' + (Repair-YaLine $query))
   Write-Output ('tag: ' + (Repair-YaLine $tag))
   if ($taskId) { Write-Output ('task: ' + $taskId) }
   Write-Output ('hits: ' + $clean.Count)
+  $offset=0;$limit=10
+  $offsetArg=Get-YaArg $Map 'offset';$limitArg=Get-YaArg $Map 'limit'
+  if(($offsetArg -and (-not [int]::TryParse($offsetArg,[ref]$offset) -or $offset -lt 0)) -or
+     ($limitArg -and (-not [int]::TryParse($limitArg,[ref]$limit) -or $limit -lt 1 -or $limit -gt 30))){throw 'offset 须非负，limit 须为 1–30'}
+  $version=Get-YaArg $Map 'version';$interface=Get-YaArg $Map 'interface'
+  $shown=0;$matched=0;$budget=6000;$more=$false
+  $dirs=@{}
   foreach ($hit in $clean) {
     $e = $hit.entry
+    if(-not $dirs.ContainsKey($hit.slot)){$dirs[$hit.slot]=(Resolve-YaSlot $Lib $hit.slot -ReadOnly).dir}
+    $file=Get-YaFormalFile $dirs[$hit.slot] $e.id
+    if(-not $file){continue}
+    $record=Read-YaJsonFile $file
+    if($record.lifecycle -eq 'withdrawn' -or ($version -and $version -cne $record.context.software_version) -or
+      ($interface -and $interface -cne $record.context.interface)){continue}
+    if($matched++ -lt $offset){continue}
+    if($shown -ge $limit){$more=$true;break}
     $id = Format-YaShownId (Get-YaTextProp $e 'id')
     $shownSlot = Format-YaShownId ([string]$hit.slot)
-    $line = '- slot=' + $shownSlot + ' id=' + $id + ' c=' + (Get-YaTextProp $e 'c') + ' t=' + (Get-YaTextProp $e 't') + ' f=' + (Format-YaShown (Get-YaTextProp $e 'f'))
-    $mark = Repair-YaLine (Get-YaTextProp $e 'm')
-    if ($mark) { $line += ' m=' + (Format-YaShown $mark) }
+    $kind=if($e.c -eq '坑'){'warning'}elseif($record.independently_verified -and $version -and $interface -and $hit.slot -ne 'generic'){'verified_method'}else{'reference_recheck_required'}
+    $line='- '+$kind+' slot='+$shownSlot+' id='+$id+' '+(Format-YaPreview (Get-YaTextProp $e 't'))
+    $get='  get: exp_get id='+$id+' slot='+$shownSlot
+    if($line.Length+$get.Length+2 -gt $budget){$more=$true;break}
+    $budget-=$line.Length+$get.Length+2;$shown++
     Write-Output $line
-    Write-Output ('  get: exp_get id=' + $id + ' slot=' + $shownSlot)
-    Write-Output ('  preview: ' + (Format-YaPreview (Get-YaTextProp $e 't')))
+    Write-Output $get
   }
-  if ($clean.Count -eq 0) {
+  if($more){Write-Output ('next_offset: '+($offset+$shown))}
+  if($slotArg -notin @('all','generic') -and $budget -gt 0){
+    $riskDir=Join-Path (Resolve-YaSlot $Lib $slotArg -ReadOnly).dir '_风险'
+    $warnings=0
+    foreach($riskFile in (Get-ChildItem -LiteralPath $riskDir -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)){
+      $risk=Read-YaJsonFile $riskFile.FullName
+      if($risk.status -ne 'unresolved' -or ($version -and $version -cne $risk.software_version) -or ($interface -and $interface -cne $risk.interface)){continue}
+      if($query -and (($risk.title+' '+($risk.keywords -join ' ')).IndexOf($query,[StringComparison]::OrdinalIgnoreCase) -lt 0)){continue}
+      $warning='- unresolved_warning request='+$risk.request+' '+(Format-YaPreview $risk.title)+' '+$risk.note
+      if($warnings -ge 5 -or $warning.Length+2 -gt $budget){break}
+      Write-Output $warning
+      $warnings++;$budget-=$warning.Length+2
+    }
+  }
+  if ($shown -eq 0) {
     Write-Output 'get: none'
     Write-Output 'preview: none'
   }
@@ -355,7 +385,7 @@ function Invoke-YaSearch([string]$Lib, $Map, [bool]$Recall) {
   if ($Recall) {
     Write-Output 'recall: yes'
     if ($clean.Count -gt 0) {
-      Write-Output 'next: 有命中先按 get 行 exp_get，沿用那条。确实用不上，才可以生成。'
+      Write-Output 'next: 按适用版本、接口、风险和证据判断是否采用，记录采用步骤或不采用的原因。'
     } else {
       Write-Output 'next: 没有命中，才可以生成，再写草稿。'
     }
@@ -382,13 +412,16 @@ try {
   }
 
   $root = Get-YaPackageRoot
+  $readOnly=$Command -in @('exp_search','exp_get','skill_search','skill_get')
   if(Test-Path -LiteralPath (Join-Path $root 'YA插件\真实记录.ps1')) {
     . (Join-Path $root 'YA插件\连接上下文.ps1')
     . (Join-Path $root 'YA插件\真实记录.ps1')
-    Assert-YaOperation $root
+    if(-not $readOnly){Assert-YaOperation $root}
   }
-  $lib = Initialize-YaLibrary $root
-  Initialize-YaFlow $lib
+  if($readOnly){$lib=Join-Path $root '经验库'}else{
+    $lib=Initialize-YaLibrary $root
+    Initialize-YaFlow $lib
+  }
   if($Command -in @('skill_search','skill_get')){
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root '经验库\通用技能库\00_索引\查询.ps1') $Command @Rest
     exit $LASTEXITCODE
@@ -559,7 +592,7 @@ try {
     $slotArg = Get-YaArg $argsMap 'slot'
     $id = Get-YaArg $argsMap 'id'
     if (Test-YaReservedActive $lib $slotArg) { throw (Format-YaAllGet $lib $id) }
-    $resolved = Resolve-YaSlot $lib $slotArg
+    $resolved = Resolve-YaSlot $lib $slotArg -ReadOnly
     if (-not $id) { throw 'exp_get 需要 id=条目号。' }
     $file = Get-YaFormalFile $resolved.dir $id
     $where = 'index'
@@ -572,7 +605,6 @@ try {
     if ($where -eq 'index' -and (Test-YaFileForbidden $file)) {
       throw ('这条经验含禁止写入的词，不能调取。只连接自己已有的合法软件。请用 exp_hold id=' + (Format-YaShownId $id) + ' slot=' + (Format-YaShownId $resolved.id) + ' 清出索引，改回草稿后再改。')
     }
-    Add-YaCall $lib $resolved.id
     $usage = Get-YaSlotUsage $lib $resolved.id
     Write-Output ('where: ' + $where)
     Write-Output ('file: ' + (Format-YaShown $file))

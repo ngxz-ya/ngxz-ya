@@ -75,9 +75,7 @@ def dispatch(q):
         if q["protocol"] != "ngxz-ya/frontend-task/1" or not reply["can_execute"]:
             raise ValueError("Wrong protocol or active document")
         reply.update(ok=True, software_version=version, bridge_sha256=bridge_hash)
-        if q["action"] == "Check":
-            reply["status"] = "READY"
-        elif q["action"] == "Execute":
+        if q["action"] in ("Check", "Execute") and "steps" in q:
             steps = q["steps"]
             if len(steps) != 1 or steps[0].get("action") != "set_box":
                 raise ValueError("Only the set_box operation is supported")
@@ -91,6 +89,11 @@ def dispatch(q):
             dims = [float(q["parameters"][key]) for key in ("length", "width", "height")]
             if any(not math.isfinite(value) or not 1 <= value <= 1000 for value in dims):
                 raise ValueError("Dimensions must be 1 to 1000 mm")
+        if q["action"] == "Check":
+            reply["status"] = "READY"
+        elif q["action"] == "Execute":
+            if "document_id" in q and (q["document_id"], q["document_path"]) != (reply["document_id"], reply["document_path"]):
+                raise ValueError("Active document changed after preflight")
             before = measure()
             save_json(marker, {"pid": pid, "document": document.Name, "object": box.Name, "before": before})
             box.Length, box.Width, box.Height = dims

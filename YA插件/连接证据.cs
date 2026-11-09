@@ -134,6 +134,25 @@ public static class YaEvidence {
       foreach (string key in new string[]{"session","pid","process_start"})
         if (S(binding,key)!=S(link,key)) return false;
       var result=Read(state);
+      string methodPath=System.IO.Path.Combine(pkg,"连接教练","连接经验",S(link,"slot"),"方法.json");
+      if (Hash(methodPath)!=S(result,"method_hash")) return false;
+      var method=Read(methodPath);
+      var frontend=method.ContainsKey("frontend") ? method["frontend"] as System.Collections.Generic.IDictionary<string,object> : null;
+      string driver=S(method,"driver"), reader=frontend==null ? "" : S(frontend,"reader");
+      string directory=System.IO.Path.GetDirectoryName(methodPath);
+      if (!System.Text.RegularExpressions.Regex.IsMatch(driver,"^[A-Za-z0-9_-]+[.]ps1$") ||
+          !System.Text.RegularExpressions.Regex.IsMatch(reader,"^[A-Za-z0-9_-]+[.]ps1$") ||
+          Hash(System.IO.Path.Combine(directory,driver))!=S(method,"driver_sha256") ||
+          Hash(System.IO.Path.Combine(directory,reader))!=S(frontend,"reader_sha256")) return false;
+      if (method.ContainsKey("dependencies")) {
+        var dependencies=method["dependencies"] as System.Collections.IEnumerable;
+        if (dependencies==null) return false;
+        foreach (var item in dependencies) {
+          var dependency=item as System.Collections.Generic.IDictionary<string,object>;
+          if (dependency==null || !System.IO.Path.IsPathRooted(S(dependency,"path")) ||
+              Hash(S(dependency,"path"))!=S(dependency,"sha256")) return false;
+        }
+      }
       return S(result,"status")=="completed" && S(result,"mode")=="interactive" &&
         S(result,"request")==request && Hash(state)==S(acceptance,"state_sha256") &&
         Hash(System.IO.Path.Combine(job,"Verify.json"))==S(acceptance,"verify_sha256");
@@ -207,7 +226,11 @@ public static class YaWindow {
         int cloaked;Rect r;if(!IsWindowVisible(window)||IsIconic(window)||IsHungAppWindow(window)||DwmGetWindowAttribute(window,14,out cloaked,4)!=0||cloaked!=0||!GetWindowRect(window,out r))return false;
         int left=System.Math.Max(r.Left,GetSystemMetrics(76)),top=System.Math.Max(r.Top,GetSystemMetrics(77)),right=System.Math.Min(r.Right,GetSystemMetrics(76)+GetSystemMetrics(78)),bottom=System.Math.Min(r.Bottom,GetSystemMetrics(77)+GetSystemMetrics(79));
         if(right-left<24||bottom-top<24)return false;
-        foreach(int y in new int[]{top+12,(top+bottom)/2,bottom-12}){uint at;GetWindowThreadProcessId(WindowFromPoint(new Point{X=(left+right)/2,Y=y}),out at);if(at==(uint)pid){visible=true;break;}}
+        foreach(int x in new int[]{left+12,(left+right)/2,right-12})
+          foreach(int y in new int[]{top+12,(top+bottom)/2,bottom-12}){
+            uint at;GetWindowThreadProcessId(WindowFromPoint(new Point{X=x,Y=y}),out at);
+            if(at==(uint)pid){visible=true;return false;}
+          }
         return false;};
       EnumDesktopWindows(desktop,cb,System.IntPtr.Zero);return visible;
     }finally{CloseDesktop(desktop);}
