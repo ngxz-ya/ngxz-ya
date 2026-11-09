@@ -36,8 +36,8 @@ try{
   $recordDir=Get-Item -LiteralPath $deployRecords -Force
   if(-not $recordDir.PSIsContainer -or ($recordDir.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw '部署记录目录无效'}
   $stage=Join-Path $recordDir.FullName ('部署暂存-'+[guid]::NewGuid().ToString('N'))
-  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $source '准备隔离包.ps1') -Destination $stage -Profile TestCopy
-  if($LASTEXITCODE){throw '打包检查失败；保留现场'}
+  $packOutput=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $source '准备隔离包.ps1') -Destination $stage -Profile TestCopy
+  if($LASTEXITCODE){$packOutput|Write-Output;throw '部署检查失败；保留现场'}
   $guard=$null;$softwareGuard=$null;$runtimeHeld=$false;$softwareHeld=$false
   try{
    if(Test-Path -LiteralPath $runtime){
