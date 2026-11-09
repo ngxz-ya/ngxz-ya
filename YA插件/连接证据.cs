@@ -121,6 +121,24 @@ public static class YaEvidence {
     if (S(link, "state") != "ok") return "not-registered";
     return CheckCore(pkg, io, link, true);
   }
+  public static bool HasFrontendAcceptance(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link) {
+    try {
+      var acceptance = Read(System.IO.Path.Combine(io, "frontend-acceptance.json"));
+      foreach (string key in new string[]{"package_id","slot","session","pid","process_start","readback_sha256"})
+        if (S(link,key)=="" || S(acceptance,key)!=S(link,key)) return false;
+      string request=S(acceptance,"request");
+      if (!System.Text.RegularExpressions.Regex.IsMatch(request,"^[a-f0-9]{32}$")) return false;
+      string job=System.IO.Path.Combine(Work(pkg,S(link,"slot")),request);
+      string state=System.IO.Path.Combine(job,"request.json");
+      var binding=Read(System.IO.Path.Combine(job,"frontend-session.json"));
+      foreach (string key in new string[]{"session","pid","process_start"})
+        if (S(binding,key)!=S(link,key)) return false;
+      var result=Read(state);
+      return S(result,"status")=="completed" && S(result,"mode")=="interactive" &&
+        S(result,"request")==request && Hash(state)==S(acceptance,"state_sha256") &&
+        Hash(System.IO.Path.Combine(job,"Verify.json"))==S(acceptance,"verify_sha256");
+    } catch { return false; }
+  }
   public static string CheckCommandChannel(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link) {
     string reason=CheckRegistered(pkg,io,link);
     if (reason!="") return reason;

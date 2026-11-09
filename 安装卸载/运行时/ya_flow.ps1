@@ -29,7 +29,7 @@ function Get-YaTokenValue($Obj) {
 }
 
 function Format-YaToken($Value) {
-  if ($null -eq $Value) { return '未登记' }
+  if ($null -eq $Value) { return '未统计' }
   return [string]$Value
 }
 
@@ -205,7 +205,7 @@ function Write-YaUsage([string]$Lib, $Usage) {
       })
   }
   $note = [string]$Usage.note
-  if (-not $note) { $note = '各槽调用次数，和使用者自行登记的 TOKEN。没有登记就显示未登记。本包不读任何软件，也不把估算当成账单。' }
+  if (-not $note) { $note = '各槽调用次数，和使用者自行登记的 TOKEN。没有登记就显示未统计。本包不读任何软件，也不把估算当成账单。' }
   $doc = [ordered]@{
     version     = 1
     '说明'      = $note
@@ -264,7 +264,7 @@ function Set-YaToken([string]$Lib, [string]$SlotId, [string]$Token, [string]$Not
   $tokenValue = $null
   $raw = (Repair-YaLine $Token)
   if ($raw) {
-    if ($raw -notmatch '^\d+$') { throw 'token 只能是非负整数，或留空表示未登记。' }
+    if ($raw -notmatch '^\d+$') { throw 'token 只能是非负整数，或留空表示未统计。' }
     if ([int64]$raw -gt 2000000000) { throw 'token 太大。' }
     $tokenValue = [int]$raw
   }
@@ -359,7 +359,7 @@ function Write-YaLinks([string]$Lib, $Links) {
 
 function Initialize-YaFlow([string]$Lib) {
   $noteLink = '只收三步闸全部过关的软件。开了经验槽或写了草稿都不算已挂。本包不探测本机装了什么软件。'
-  $noteUse = '各槽调用次数，和使用者自行登记的 TOKEN。没有登记就显示未登记。本包不读任何软件，也不把估算当成账单。'
+  $noteUse = '各槽调用次数，和使用者自行登记的 TOKEN。没有登记就显示未统计。本包不读任何软件，也不把估算当成账单。'
   $noteTag = '任务标签倒排。条目仍按软件槽分文件存放。检索先定槽，再用标签收窄。'
   $noteGate = '最近一次检索。写入草稿前必须先检索，且槽要一致。用过一次就要重新检索。'
   $noteFlow = '进行中的任务和最近记录。自检未过不能报完成。'
@@ -591,7 +591,7 @@ function Format-YaOverview([string]$Lib) {
     [void]$lines.Add('reserved all entries=' + $ov.reserved_entries + ' drafts=' + $ov.reserved_drafts)
     [void]$lines.Add('note: all 是保留名，不能当槽。' + (Get-YaReservedClearHint))
   }
-  $tokenText = '未登记'
+  $tokenText = '未统计'
   if ([int]$ov.token_known -gt 0) { $tokenText = [string]$ov.sum_token }
   [void]$lines.Add('sum slots=' + $ov.slot_count + ' entries=' + $ov.sum_entries + ' calls=' + $ov.sum_calls + ' token=' + $tokenText + ' token_known=' + $ov.token_known + '/' + $ov.slot_count)
   $side = Get-YaSoftwareSide $Lib
@@ -600,15 +600,15 @@ function Format-YaOverview([string]$Lib) {
   $sideSlot = ''
   if ($side.slot) { $sideSlot = ' slot=' + (Format-YaShownId ([string]$side.slot)) }
   [void]$lines.Add('side connected=' + $sideConn + $sideSlot + ' software_entries=' + $side.entries + ' software_drafts=' + $side.drafts + ' software_calls=' + $side.calls)
-  [void]$lines.Add('note: 分槽存放，本命令一处总览。TOKEN 只合计已登记的槽；没登记显示未登记，不当成账单。')
-  [void]$lines.Add('note: 软件侧只计已核对的连接：登记 state=ok，且这个 pid 的主窗口还在、能响应、看得见，槽号对得上本包里的软件槽。进程号读不了、槽号对不上、残留登记，都按 0。只是大小写不同则计入那个槽。各槽自己的行仍是台账。读不了的超大 TOKEN 显示未登记。')
+  [void]$lines.Add('note: 分槽存放，本命令一处总览。TOKEN 只合计已登记的槽；没登记显示未统计，不当成账单。')
+  [void]$lines.Add('note: 软件侧只计已核对的连接：登记 state=ok，且这个 pid 的主窗口还在、能响应、看得见，槽号对得上本包里的软件槽。进程号读不了、槽号对不上、残留登记，都按 0。只是大小写不同则计入那个槽。各槽自己的行仍是台账。读不了的超大 TOKEN 显示未统计。')
   return ,$lines
 }
 
 function Get-YaSlotUsage([string]$Lib, [string]$SlotId) {
   $ov = Get-YaOverview $Lib
   if ($SlotId -eq 'all') {
-    $token = '未登记'
+    $token = '未统计'
     if ([int]$ov.token_known -gt 0) { $token = [string]$ov.sum_token }
     return @{ calls = $ov.sum_calls; token = $token }
   }
@@ -617,7 +617,7 @@ function Get-YaSlotUsage([string]$Lib, [string]$SlotId) {
       return @{ calls = [int]$s.calls; token = (Format-YaToken $s.token) }
     }
   }
-  return @{ calls = 0; token = '未登记' }
+  return @{ calls = 0; token = '未统计' }
 }
 
 function Assert-YaCoachNote([string]$Note) {

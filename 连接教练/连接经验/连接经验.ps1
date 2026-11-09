@@ -14,10 +14,6 @@ Assert-YaIsolatedPackage (Split-Path (Split-Path $here -Parent) -Parent)
 $indexPath = Join-Path $here '索引.json'
 $enc = New-Object Text.UTF8Encoding $true
 $required = @('slot','别名','t','触发条件','适用前提','参数','启动方式','步骤','前台判定','读回','失败处理','证据','未验证','v','核验')
-$generic = @(
-  @{ id = 'G-COM-011'; t = '启动并连接机械软件（前台、读回、不随 Agent 退出）'; f = '经验库\通用技能库\00_共通执行与防错\G-COM-011.json' },
-  @{ id = 'G-COM-012'; t = '首次连上后沉淀可换脑复用的连接经验'; f = '经验库\通用技能库\00_共通执行与防错\G-COM-012.json' }
-)
 $bad = '破解|注册机|盗版|crack|keygen|patch许可|绕过许可|license\s*key|许可密钥'
 function Get-Args([string[]]$a) {
   $m = @{}
@@ -149,9 +145,6 @@ try {
       }
       if ($task) { Write-Output ('task: ' + $task); Write-Output ('conn_task: ' + $(if ($isConn) { 'yes' } else { 'no' })) }
       if ($slot) { Write-Output ('slot: ' + (Show-ConnId $slot)) }
-      foreach ($g in $generic) {
-        if(Test-Path -LiteralPath (Join-Path (Split-Path (Split-Path $here -Parent) -Parent) $g.f) -PathType Leaf){Write-Output ('generic: ' + $g.id + ' ' + $g.t + ' f=' + $g.f)}
-      }
       Write-Output ('hits: ' + $hits.Count)
       foreach ($e in $hits) {
         Write-Output ('- slot=' + (Show-ConnId ([string]$e.slot)) + ' id=' + (Show-ConnId ([string]$e.id)) + ' v=' + $e.v + ' 状态=' + (Show-ConnText ([string]$e.状态)) + ' t=' + (Show-ConnText ([string]$e.t)))

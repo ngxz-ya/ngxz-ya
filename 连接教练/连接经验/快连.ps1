@@ -99,7 +99,7 @@ try {
   try { $registered=[YaEvidence]::Read((Join-Path $existingIo 'link.json')) } catch { }
   if ($registered -and $registered['slot'] -ceq $slot -and -not [YaEvidence]::CheckRegistered($pkg,$existingIo,$registered) -and [YaWindow]::Ready([int]$registered['pid'])) {
     Write-Output ('state: 已有本包登记会话，保持当前进程 pid=' + $registered['pid'])
-    Write-Output 'next: 在当前任务通过发命令继续操作；本次未重新启动或重新测量软件。'
+    Write-Output 'next: 用 连接软件.ps1 -Action Connect -TaskFile 验收当前会话；已有登记仅表明通道可核验。'
     Write-Output 'RESULT: ALREADY_REGISTERED'
     exit 0
   }
@@ -271,7 +271,7 @@ $r.alive = [bool]$pr
   Mark '前台复核'
 
   $okAll = $linkOk -and $fgOk -and [bool]$fr.alive
-  # 连接记录（包外）：可直接抄进连接卡「证据」；首连成功后按 G-COM-012 写卡
+  # 连接记录（包外）：可作为连接卡的通道核验依据。
   $recDir = Join-Path ([YaEvidence]::Work($pkg, $slot)) 'records'
   if (-not (Test-Path -LiteralPath $recDir)) { New-Item -ItemType Directory -Path $recDir -Force | Out-Null }
   $rec = [ordered]@{ time = $t0.ToString('s'); slot = $slot; card = [string]$card.id; card_v = [int]$card.v; soft = $soft; pid = $newPid; nonce = $nonce; ok = $okAll; fg_check = [int]$fr.fg_check; title = [string]$fr.title; agent = $agent; agent_pid = $agentPid; usage_log = $log; params = $params; marks = $marks; readback = $txt; package = $pkg }
@@ -281,8 +281,8 @@ $r.alive = [bool]$pr
   Write-Output ('timing: ' + (($marks.Keys | ForEach-Object { $_ + '=' + $marks[$_] + 's' }) -join ' | '))
   Write-Output ('total_seconds: ' + [Math]::Round(((Get-Date) - $t0).TotalSeconds, 1))
   if ($okAll) {
-    Write-Output ('state: 连接成功 · ' + $soft + '（前台复核通过，pid=' + $newPid + '）')
-    Write-Output ('next: 连上了。正式包里按 G-COM-012 把本次 record 补进卡「证据」（测试包不写）；要实时改模型看卡「快通道.命令通道」。')
+    Write-Output ('state: 前台通道就绪 · 待任务验收 · ' + $soft + '（pid=' + $newPid + '）')
+    Write-Output 'next: 用 连接软件.ps1 -Action Connect -TaskFile 完成同窗口实际修改和独立读回。'
     Write-Output 'RESULT: OK'; exit 0
   } else {
     Write-Output ('state: 未达标（' + $(if (-not $linkOk) { 'ya_link 没 OK' } else { '前台复核没过' }) + '）。不要说已连上。软件 pid=' + $newPid + ' 仍开着，不杀。')

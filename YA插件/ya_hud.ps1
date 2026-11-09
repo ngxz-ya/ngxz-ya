@@ -1,6 +1,6 @@
 ﻿# YA 状态小窗（白底卡）。开源包通用版：布局、TOKEN / 经验调用统计逻辑沿用旧 YA 白底卡，不绑定任何一家机械软件。第三块是「任务完成度」：读经验库 流程.json 当前任务的五项自检（search/compare/draft/claim/inspect）过了几项，已验收才算 100%（2026-11-04 由原合格率改）。
 # 连接态只看 io\link.json（由同目录 ya_link.ps1 soft=软件名 pid=软件主窗口进程号 写入）：
-#   软件进程可见、响应，且本包本会话新鲜挑战读回通过 = 「连接成功 · 软件名」（后台/批处理/看不见的窗口一律不算）；没写 link = 「未连接」；进程没了 = 「软件名 已掉线」；不响应 = 「软件名 未响应」。
+#   进程、窗口和通道登记通过后显示待验收；当前登记会话通过 Connect 前台验收后显示连接成功。
 #   本窗口不探测、不附着、不修改任何机械软件，只读文件。
 # TOKEN：读 Agent 的 stdout 日志（Grok streaming-json usage / Codex / tokens used），日志路径来自 link.json 的 log 或环境变量 YALINK_USAGE_LOG。
 # 经验调用（2026-11-05 分列）：消耗.json generic 槽 calls = 通用；当前已连软件槽 calls + 连接卡命中(io\card_hits.json) = 软件。数字旁写「次 · 通用x·软件y」。
@@ -975,11 +975,15 @@ public class YaCard : Window {
     else { linkState = "nopid"; linkLast = false; return false; }
     linkReason = YaEvidence.CheckRegistered(System.IO.Path.GetDirectoryName(libDir), ioDir, d);
     if (linkReason != "") { linkState = "evidence"; linkLast = false; return false; }
+    if (!YaEvidence.HasFrontendAcceptance(System.IO.Path.GetDirectoryName(libDir), ioDir, d)) {
+      linkState = "awaitingAcceptance"; linkLast = false; return false;
+    }
     linkState = "ok"; linkLast = true; return true;
   }
   string LinkText() {
     string n = linkSoft == "" ? "" : linkSoft + " ";
     if (linkState == "recovery") return "连接待复核";
+    if (linkState == "awaitingAcceptance") return "通道就绪 · 待验收";
     if (linkState == "ok") return "\u8FDE\u63A5\u6210\u529F" + (linkSoft == "" ? "" : " \u00B7 " + linkSoft);
     if (linkState == "evidence") return n + "已打开 · 待读回";
     if (linkState == "lost") return n + "\u5DF2\u6389\u7EBF";
@@ -1546,7 +1550,8 @@ public class YaCard : Window {
     return b.ToString();
   }
   void ShowActualEvents() {
-    int calls=0, verified=0, reused=0; double measuredSeconds=0, retrievalSeconds=0, commandSeconds=0;
+    int searches=0, reads=0, verified=0, reused=0; double measuredSeconds=0, retrievalSeconds=0, commandSeconds=0;
+    string verifiedMode="";
     var current=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));
     string task=Str(current,"id"), slot=TaskSlot();
     int common=CommonCount(), software=SoftwareCount(slot);
@@ -1558,7 +1563,7 @@ public class YaCard : Window {
       if(Str(ev,"kind")=="experience_verified") {
         var proof=ev["data"] as Dictionary<string,object>;
         if(proof!=null && task!="" && Str(proof,"task")==task && Str(proof,"slot")==Str(current,"slot") && (Str(proof,"verification")=="independent_software_readback" || Str(proof,"verification")=="independent_adapter_readback")) {
-          verified++; measuredSeconds+=Num(proof,"elapsed_ms")/1000.0; if(Str(proof,"reused_experience")!="") reused++;
+          verified++; verifiedMode=Str(proof,"mode"); measuredSeconds+=Num(proof,"elapsed_ms")/1000.0; if(Str(proof,"reused_experience")!="") reused++;
         }
         continue;
       }
@@ -1568,22 +1573,30 @@ public class YaCard : Window {
       var t=Has(d,"task") ? d["task"] as Dictionary<string,object> : null;
       if(task=="" || t==null || Str(t,"id")!=task) continue;
       var command=d["command"] as object[];
-      if(command!=null && command.Length>0 && (command[0].ToString()=="exp_search" || command[0].ToString()=="exp_recall" || command[0].ToString()=="exp_get" || command[0].ToString()=="skill_search" || command[0].ToString()=="skill_get")) { calls++; retrievalSeconds+=Num(d,"elapsed_ms")/1000.0; }
+      if(command==null || command.Length==0) continue;
+      string action=Convert.ToString(command[0]);
+      if(action=="exp_search" || action=="exp_recall" || action=="skill_search") searches++;
+      else if(action=="exp_get" || action=="skill_get") reads++;
+      else continue;
+      retrievalSeconds+=Num(d,"elapsed_ms")/1000.0;
     }
+    int calls=searches+reads;
     vUse.Text=calls.ToString(IC); uUse.Text="次";
+    vUse.ToolTip="检索 "+searches+" 次 · 读取全文 "+reads+" 次";
     vLib.Text=verified.ToString(IC); uLib.Text="条";
     if(verified>0) { string val,unit; Dur(measuredSeconds,out val,out unit); vTime.Text=val;uTime.Text=unit; }
     else { vTime.Text="未统计";uTime.Text=""; }
     tTime.ToolTip="前台命令等待（未等同工程验收）："+commandSeconds.ToString("0.###",IC)+" 秒；软件执行及独立验证："+measuredSeconds.ToString("0.###",IC)+" 秒；检索/调取："+retrievalSeconds.ToString("0.###",IC)+" 秒。来源为持久化事件。";
 
     tLib.ToolTip="适配器回报不等于独立工程验收；点击查看原始事件。";
-    if(current!=null) dSub.Text="自检 "+taskPass+"/"+taskTotal+" · "+Str(current,"status");
+    if(current!=null) dSub.Text="自检 "+taskPass+"/"+taskTotal+" · "+(verifiedMode=="batch" ? "批处理已验收" : Str(current,"status"));
     try {
       var view=new Dictionary<string,object>();
       view["rendered_utc"]=DateTime.UtcNow.ToString("o");view["task_id"]=task;
       view["token_text"]=vTokn.Text;view["savings_text"]=vTok.Text;
       view["library_text"]=vAll.Text;view["common_entries"]=common;view["software_entries"]=software;view["task_percent"]=taskPct;view["task_status"]=Str(current,"status");view["retrieval_calls"]=calls;view["verified_new"]=verified;view["successful_reuses"]=reused;
       view["task_text"]=dSub.Text;view["software_status"]=LinkText();view["command_seconds"]=commandSeconds;view["measured_seconds"]=measuredSeconds;view["retrieval_seconds"]=retrievalSeconds;
+      view["retrieval_count"]=searches;view["read_count"]=reads;view["verified_task_mode"]=verifiedMode;
       File.WriteAllText(System.IO.Path.Combine(ioDir,"hud_view.json"),js.Serialize(view),new UTF8Encoding(false));
     } catch { }
     if(totWin!=null) FillActualTotals();
@@ -1864,7 +1877,7 @@ public class YaCard : Window {
     } else if (sc == 3) {
       lab = "\u5b8c\u6210\u5ea6";
       if (!taskKnown || taskPct == 99) { val = taskWord; un = ""; fg = Sub; tip = taskReport; }
-      else { val = taskPct.ToString(IC); un = "%"; fg = (taskDone && linkState == "ok") ? OkInk : Ink; tip = taskReport + (linkState == "ok" ? "" : "\n\u8FDE\u63A5\u672A\u6838\u9A8C\uFF08\u4EFB\u52A1\u81EA\u68C0\u2260\u5DF2\u8FDE\u63A5\uFF09"); }
+      else { val = taskPct.ToString(IC); un = "%"; fg = Ink; tip = taskReport + (linkState == "ok" ? "" : "\n\u8FDE\u63A5\u672A\u6838\u9A8C\uFF08\u4EFB\u52A1\u81EA\u68C0\u2260\u5DF2\u8FDE\u63A5\uFF09"); }
     }
     string label = lab + " " + val + (un == "" ? "" : " " + un);
     if (stripText != null) {
@@ -1934,9 +1947,9 @@ public class YaCard : Window {
     } else {
       vRate.Text = taskPct.ToString(IC); uRate.Text = "%";
       // while not link-ok, never paint completion as green success
-      vRate.Foreground = new SolidColorBrush((taskDone && linkState == "ok") ? OkInk : Ink);
+      vRate.Foreground = new SolidColorBrush(Ink);
     }
-    if (dSub != null) { dSub.Text = sub; dSub.Visibility = taskKnown ? Visibility.Visible : Visibility.Collapsed; dSub.Foreground = new SolidColorBrush((taskDone && linkState == "ok") ? OkInk : Sub); dSub.ToolTip = null; }
+    if (dSub != null) { dSub.Text = sub; dSub.Visibility = taskKnown ? Visibility.Visible : Visibility.Collapsed; dSub.Foreground = new SolidColorBrush(Sub); dSub.ToolTip = null; }
     if (tRate != null) tRate.ToolTip = taskReport + (linkState == "ok" ? "" : "\n\u8FDE\u63A5\u672A\u6838\u9A8C");
   }
 

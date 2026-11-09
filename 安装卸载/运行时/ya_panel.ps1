@@ -70,7 +70,6 @@ function New-YaMargin([string]$Text) {
 $ink = '#1C1B19'
 $sub = '#6B6560'
 $line = '#E4E0D8'
-$ok = '#0F6E56'
 $wait = '#8A5A00'
 $model = Get-YaOverview $lib
 
@@ -116,10 +115,10 @@ function Add-Card([string]$Title, [string]$Body, [string]$Badge, [string]$BadgeH
   Put-Ui $rootPanel $card
 }
 
-$tokenText = '未登记'
+$tokenText = '未统计'
 if ([int]$model.token_known -gt 0) { $tokenText = [string]$model.sum_token }
 Put-Ui $rootPanel (New-Label 'YA' 22 $ink 'bold' '0,0,0,2')
-Put-Ui $rootPanel (New-Label ('已挂 ' + $model.linked_count + '    经验 ' + $model.sum_entries + '    调用 ' + $model.sum_calls + '    TOKEN ' + $tokenText) 13 $ink 'bold' '0,0,0,4')
+Put-Ui $rootPanel (New-Label ('教练过关 ' + $model.linked_count + '    经验 ' + $model.sum_entries + '    调用 ' + $model.sum_calls + '    TOKEN ' + $tokenText) 13 $ink 'bold' '0,0,0,4')
 Put-Ui $rootPanel (New-Label '分槽存放，这里一处看完。TOKEN 只显示已登记的数字。' 12 $sub '' '0,0,0,10')
 
 if ((Get-YaItems $model.slots).Count -eq 0) {
@@ -128,16 +127,16 @@ if ((Get-YaItems $model.slots).Count -eq 0) {
   foreach ($s in (Get-YaItems $model.slots)) {
     $badge = '未过关'
     $color = $wait
-    if ($s.linked) { $badge = '已挂'; $color = $ok }
+    if ($s.linked) { $badge = '教练过关' }
     $body = '经验 ' + $s.entries + '    草稿 ' + $s.drafts + '    调用 ' + $s.calls + '    TOKEN ' + (Format-YaToken $s.token)
     Add-Card ($s.title + '  ·  ' + (Format-YaShownId ([string]$s.id))) $body $badge $color
   }
 }
 if ([int]$model.linked_count -eq 0) {
-  Put-Ui $rootPanel (New-Label '还没有软件通过三步闸。槽可以先记账，过关才算已挂。' 12 $sub '' '0,2,0,8')
+  Put-Ui $rootPanel (New-Label '三步闸记录进度。前台连接状态请查看 YA 悬浮面板。' 12 $sub '' '0,2,0,8')
 }
 if ([int]$model.failed_count -gt 0) {
-  Put-Ui $rootPanel (New-Label ('失败 ' + $model.failed_count + '。原因用 link_list 看，不进已挂。') 12 $sub '' '0,2,0,8')
+  Put-Ui $rootPanel (New-Label ('失败 ' + $model.failed_count + '。原因用 link_list 查看。') 12 $sub '' '0,2,0,8')
 }
 if ($model.reserved) {
   Put-Ui $rootPanel (New-Label ('保留名 all 不能当槽。经验 ' + $model.reserved_entries + '，草稿 ' + $model.reserved_drafts + '。有条目请先迁走再清。') 12 $sub '' '0,2,0,8')

@@ -213,7 +213,8 @@ try {
 
   $hudShown=Show-YaHud
   if(-not $hudShown){Write-Output 'state: 软件通道已核验，YA前台交付未完成；修复显示后无需重新操作软件';Write-Output 'RESULT: FAIL';exit 1}
-  Write-Output ('state: 连接成功 · ' + $soft)
+  Write-Output ('state: 前台通道就绪 · 待任务验收 · ' + $soft)
+  Write-Output 'next: 用 连接软件.ps1 -Action Connect -TaskFile 完成实际修改、独立读回及 YA 验收。'
   Write-Output ('soft_window: ' + $proc.MainWindowTitle)
   Write-Output ('slot: ' + $resolved.id + $(if ($slotNote) { '  （' + $slotNote + '）' } else { '' }))
   Write-Output ('exp_folder: ' + $expDirLine)
