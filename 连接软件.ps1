@@ -202,7 +202,9 @@ try{
    readback_sha256=$link['readback_sha256'];request=$RequestId;state_sha256=[YaEvidence]::Hash($stateFile)
    verify_sha256=[YaEvidence]::Hash((Join-Path $job 'Verify.json'))
   }
-  @{status='CONNECTED_INTERACTIVE';software=$Software;request=$RequestId;live_link=$true;frontend_pid=$link['pid'];process_start=$link['process_start'];channel_available=$true;software_visible=$true;task_verified=$true;hud_visible=$true}|ConvertTo-Json
+  $firstDone=[YaEvidence]::HasFirstConnectComplete($pkg,$io,$link)
+  @{status=$(if($firstDone){'CONNECTED_INTERACTIVE'}else{'FIRST_CONNECT_PENDING_COLD_FASTPATH'});software=$Software;request=$RequestId;live_link=$true;frontend_pid=$link['pid'];process_start=$link['process_start'];channel_available=$true;software_visible=$true;task_verified=$true;hud_visible=$true;first_connect_complete=$firstDone;next=$(if($firstDone){'复用当前前台会话'}else{'轻读回已通，但首连未完成：请关闭软件，用已存连接卡从零跑 快连.ps1，通过后才标 v=1 / 已验收'})}|ConvertTo-Json
+  if(-not $firstDone){exit 0}
   exit 0
  }
  # A checked, accepted live session can be handed to the next Agent without rediscovery.
@@ -214,7 +216,7 @@ try{
    $link=[YaEvidence]::Read($linkFile)
    $channelAvailable=($link['slot'] -ceq $slot -and $link['soft'] -ieq $Software -and
      -not [YaEvidence]::CheckCommandChannel($pkg,$io,$link))
-   $accepted=($channelAvailable -and [YaEvidence]::HasFrontendAcceptance($pkg,$io,$link))
+   $accepted=($channelAvailable -and [YaEvidence]::HasFirstConnectComplete($pkg,$io,$link))
   }catch{}
  }
  $hudVisible=$null

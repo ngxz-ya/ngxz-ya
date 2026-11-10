@@ -227,6 +227,35 @@ public static class YaEvidence {
         Hash(System.IO.Path.Combine(job,"Verify.json"))==S(acceptance,"verify_sha256");
     } catch { return false; }
   }
+
+  public static bool HasColdFastpathVerification(string pkg, string io, string slot) {
+    try {
+      var ev = Read(System.IO.Path.Combine(io, "fastpath-verified.json"));
+      if (S(ev, "package_id") != Identity(pkg) || S(ev, "slot") != slot) return false;
+      string cold = S(ev, "cold_start").Trim().ToLowerInvariant();
+      if (cold != "true" && cold != "1") return false;
+      if (S(ev, "result") != "OK") return false;
+      string rel = S(ev, "card_file").Replace('/', '\\');
+      if (rel == "" || rel.IndexOf("..", System.StringComparison.Ordinal) >= 0) return false;
+      string cardPath = System.IO.Path.GetFullPath(System.IO.Path.Combine(pkg, rel));
+      string root = System.IO.Path.GetFullPath(pkg).TrimEnd('\\') + "\\";
+      if (!cardPath.StartsWith(root, System.StringComparison.OrdinalIgnoreCase)) return false;
+      if (Hash(cardPath) != S(ev, "card_sha256")) return false;
+      var card = Read(cardPath);
+      string v = S(card, "v").Trim();
+      if (v != "1") return false;
+      if (S(card, "核验").Trim() == "") return false;
+      return true;
+    } catch { return false; }
+  }
+  public static bool HasFirstConnectComplete(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link) {
+    try {
+      if (!HasColdFastpathVerification(pkg, io, S(link, "slot"))) return false;
+      if (HasFrontendAcceptance(pkg, io, link)) return true;
+      var ev = Read(System.IO.Path.Combine(io, "fastpath-verified.json"));
+      return S(ev, "pid") == S(link, "pid");
+    } catch { return false; }
+  }
   public static string CheckCommandChannel(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link) {
     string reason=CheckRegistered(pkg,io,link);
     if (reason!="") return reason;

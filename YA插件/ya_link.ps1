@@ -7,7 +7,7 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File ".\YA插件\ya_link.ps1" off=1      标成未连接
 # pid 必填，且该进程主窗口要在用户桌面上可见（被别的窗口盖住也算，不要求置前）；后台进程、隐藏/最小化窗口、批处理/命令行无界面运行都会 RESULT: FAIL。
 # 换新进程（软件重启）时直接对新 PID 跑 prepare=1：旧进程的登记和 %LOCALAPPDATA%\YALink\frontend\<旧PID>-* 会自动归档，面板跟到新进程。
-# TOKEN：log= 仅记录来源指针；真实统计需按说明显式运行采集真实用量.ps1，没有有效用量显示「未统计」。
+# TOKEN：log= 记录来源指针；YA 面板在指针有效时自动按日志格式接入（含 Grok type=end、Codex、Antigravity）。也可显式运行采集真实用量.ps1。没有有效用量显示「未统计」。
 # 只写本包隔离的 %LOCALAPPDATA%\YAHud\instances\<包标识>\io\link.json（或环境变量 YALINK_HUD_HOME），不改安装目录、不碰软件。
 # 连接钩子（2026-11-05 维护者定规，所有软件同一套）：登记成功前自动确保这款软件的专属经验夹存在（连接教练\连接经验\经验分存.ps1 ensure）：
 #   经验库\槽\<槽>\（招式库/坑库/零件方案库/_草稿/索引.json）+ 连接教练\连接经验\<槽>\。证据协议必填 slot=；不再落到 generic。正式包、测试包都自动建，人不手建。
@@ -215,7 +215,7 @@ foreach ($bk in @('bridge_path','bridge','adapter_path','dll_path')) {
     if ($reason) { throw ('FOREIGN_BRIDGE_REFUSED: ' + $reason) }
   }
 }
-if ($proof.Contains('bridge_path') -and $proof['bridge_path']) {
+if ($proof.ContainsKey('bridge_path') -and $proof['bridge_path']) {
   $reason = [YaEvidence]::AssertLocalBridge($pkg, [string]$proof['bridge_path'])
   if ($reason) { throw ('FOREIGN_BRIDGE_REFUSED: ' + $reason) }
 }

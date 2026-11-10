@@ -73,7 +73,9 @@ $kids=@();try{$kids=@(Get-CimInstance Win32_Process -Filter ("ParentProcessId="+
 $rec=[ordered]@{schema=1;pid=$id;via=$via;interactive_desktop=$interactive;exe=$exeFull;arguments=$Arguments;env_keys=@($set.Keys);temp_dir=$tempDir;timed_run=$timedRun;directory=$Directory;started_local=$t0.ToString('o');seconds=[Math]::Round(((Get-Date)-$t0).TotalSeconds,1);main_window=$hwnd;title=$title;exited=[bool]$exited;children=$kids;modal_dialogs=$dialogs}
 $out=Join-Path $Directory 'launch.json'
 [IO.File]::WriteAllText($out,($rec|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($true))
-if($dialogs.Count){Write-Output ('MODAL_DIALOG_FAILPOINT: 启动期间出现 '+$dialogs.Count+' 个错误弹窗（已静默关闭并记录到 '+(Join-Path $Directory 'dialogs.jsonl')+'）。这是失败点：若弹窗涉及非本轮生成的 DLL/启动目录，说明软件自动加载了包外内容，改用官方环境变量/参数指向本轮空配置后重启；若是本轮桥接，先 接口探测.ps1 -Check 再按本机程序集重编。record='+$out);exit 7}
+$blocking=@($dialogs | Where-Object { $_ -match 'license=True' -or $_ -match 'dismissed=True' -or ($_ -notmatch 'unlabelled=True') })
+if($blocking.Count){Write-Output ('MODAL_DIALOG_FAILPOINT: 启动期间出现 '+$blocking.Count+' 个需处理的弹窗（许可框只记录不关，其它已记录/关闭到 '+(Join-Path $Directory 'dialogs.jsonl')+'）。这是失败点：若弹窗涉及非本轮生成的 DLL/启动目录，说明软件自动加载了包外内容，改用官方环境变量/参数指向本轮空配置后重启；若是本轮桥接，先 接口探测.ps1 -Check 再按本机程序集重编。许可框永不关。record='+$out);exit 7}
+if($dialogs.Count){Write-Output ('NOTE_UNLABELLED_MODAL: 启动期间记录 '+$dialogs.Count+' 个空标题空正文模态（未关闭，不单独作为启动失败）。record='+$out)}
 # 换新进程自动重绑 YA（2026-11-10 R10，软件无关）：本包登记的旧进程已退出、且是同一个可执行文件时，对新 PID 自动 ya_link prepare=1，面板从「已掉线」改为「已打开 · 待读回」；之后照常让新进程内桥接写 readback 再登记。
 if($hwnd){
  try{

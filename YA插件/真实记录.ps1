@@ -93,7 +93,42 @@ function Add-YaActualEvent([string]$Package, [string]$Kind, $Data) {
   $event = [ordered]@{schema=1; id=$id; time=[DateTime]::UtcNow.ToString('o'); kind=$Kind; data=$Data}
   Write-YaAtomic (Join-Path $actualHome ('events\' + $id + '.json')) $event
 }
-function Import-YaRuntimeUsage([string]$Package, [string]$Log, [string]$Session, [string]$Task, [ValidateSet('Codex','UsageJsonl','Antigravity')][string]$Format='Codex') {
+
+function Resolve-YaUsageFormat([string]$Log, [string]$Format='Auto') {
+  if ($Format -and $Format -ne 'Auto') { return $Format }
+  if (-not $Log -or -not (Test-Path -LiteralPath $Log)) { throw '找不到用量日志' }
+  $stream = [IO.File]::Open($Log,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+  $reader = [IO.StreamReader]::new($stream,[Text.Encoding]::UTF8)
+  try {
+    while ($null -ne ($line = $reader.ReadLine())) {
+      try { $e = ConvertFrom-Json -InputObject $line } catch { continue }
+      if ([string]$e.type -ceq 'end' -and $e.usage) { return 'Grok' }
+      if ([string]$e.event -eq 'init' -or [string]$e.event -eq 'result' -or ($e.conversation_id -and $e.usage)) { return 'Antigravity' }
+      if ([string]$e.type -eq 'session_meta' -or ([string]$e.type -eq 'event_msg' -and [string]$e.payload.type -eq 'token_count')) { return 'Codex' }
+      if ([string]$e.type -eq 'usage_snapshot') { return 'UsageJsonl' }
+    }
+  } finally { $reader.Dispose() }
+  throw '无法识别用量日志格式（支持 Grok type=end、Codex、Antigravity、通用 usage_snapshot）'
+}
+function Get-YaUsageSessionFromLog([string]$Log, [string]$Format) {
+  $Format = Resolve-YaUsageFormat $Log $Format
+  $stream = [IO.File]::Open($Log,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+  $reader = [IO.StreamReader]::new($stream,[Text.Encoding]::UTF8)
+  $sid = ''
+  try {
+    while ($null -ne ($line = $reader.ReadLine())) {
+      try { $e = ConvertFrom-Json -InputObject $line } catch { continue }
+      if ($Format -eq 'Grok' -and [string]$e.type -ceq 'end' -and $e.sessionId) { $sid = [string]$e.sessionId }
+      elseif ($Format -eq 'Antigravity' -and $e.conversation_id) { $sid = [string]$e.conversation_id }
+      elseif ($Format -eq 'Codex' -and [string]$e.type -eq 'session_meta' -and $e.payload.id) { $sid = [string]$e.payload.id }
+      elseif ($Format -eq 'UsageJsonl' -and [string]$e.type -eq 'usage_snapshot' -and $e.session) { $sid = [string]$e.session }
+    }
+  } finally { $reader.Dispose() }
+  if (-not $sid) { throw '用量日志里没有本会话编号' }
+  return $sid
+}
+function Import-YaRuntimeUsage([string]$Package, [string]$Log, [string]$Session, [string]$Task, [ValidateSet('Auto','Grok','Codex','UsageJsonl','Antigravity')][string]$Format='Auto') {
+  $Format = Resolve-YaUsageFormat $Log $Format
   if (-not $Session -or -not $Task) { throw '用量必须绑定 session= 和 task=' }
   $model = ''; $provider='UNKNOWN'; $agent=$Format; $models=New-Object 'Collections.Generic.List[string]'; $usage = $null; $stamp = ''; $sessionMatched = $false
   # 只保留用量和来源摘要，不保存对话或工具内容。
@@ -135,6 +170,22 @@ function Import-YaRuntimeUsage([string]$Package, [string]$Log, [string]$Session,
       $usage=$e.usage; $stamp=[string]$e.timestamp
       continue
     }
+
+    if ($Format -eq 'Grok') {
+      # 只采终态 type=end，不把逐步 usage 累加。
+      if ([string]$e.type -cne 'end' -or -not $e.usage) { continue }
+      if ([string]$e.sessionId -cne $Session) { throw 'Grok 会话不匹配' }
+      $usage = $e.usage; $sessionMatched = $true; $provider = 'xAI'; $agent = 'Grok'
+      $stamp = [IO.File]::GetLastWriteTimeUtc($Log).ToString('o')
+      if ($e.modelUsage) {
+        foreach ($m in $e.modelUsage.PSObject.Properties) {
+          $model = [string]$m.Name
+          if ($model -and -not $models.Contains($model)) { $models.Add($model) }
+        }
+      }
+      if (-not $model) { $model = 'UNKNOWN (not exported)' }
+      continue
+    }
     if ($e.type -eq 'session_meta') { if ([string]$e.payload.id -cne $Session) { throw 'Codex 用量源混入其他会话，拒绝导入' }; $sessionMatched = $true; if ($e.payload.model_provider) { $provider=[string]$e.payload.model_provider } }
     if ($e.type -eq 'turn_context' -and $e.payload.model) { $model = [string]$e.payload.model; if (-not $models.Contains($model)) { $models.Add($model) } }
     if ($e.type -eq 'event_msg' -and $e.payload.type -eq 'token_count' -and $e.payload.info.total_token_usage) {
@@ -148,7 +199,16 @@ function Import-YaRuntimeUsage([string]$Package, [string]$Log, [string]$Session,
     if (-not [long]::TryParse([string]$usage.$key, [ref]$n) -or $n -lt 0) { throw '无效 Token 数值' }
     $numbers[$key] = $n
   }
-  if ($numbers.total_tokens -ne $numbers.input_tokens + $numbers.output_tokens) { throw 'Token 总数不一致' }
+  $cacheRead = 0L; $cacheCreate = 0L; $reasoning = 0L
+  if ($Format -eq 'Grok') {
+    [void][long]::TryParse([string]$usage.cache_read_input_tokens, [ref]$cacheRead)
+    [void][long]::TryParse([string]$usage.cache_creation_input_tokens, [ref]$cacheCreate)
+    [void][long]::TryParse([string]$usage.reasoning_tokens, [ref]$reasoning)
+    if ($cacheRead -lt 0 -or $cacheCreate -lt 0 -or $reasoning -lt 0) { throw 'Grok 缓存或推理 Token 无效' }
+    if ($numbers.total_tokens -ne $numbers.input_tokens + $numbers.output_tokens + $cacheRead + $cacheCreate) { throw 'Grok Token 总数与 input+output+cache 不一致，拒绝猜算' }
+  } else {
+    if ($numbers.total_tokens -ne $numbers.input_tokens + $numbers.output_tokens) { throw 'Token 总数不一致' }
+  }
   $actualHome = Get-YaPackageHudHome $Package
   $mutex = New-Object Threading.Mutex($false, ('Local\YAUsage-' + [YaEvidence]::Identity($Package)))
   $held = $false
@@ -171,6 +231,9 @@ function Import-YaRuntimeUsage([string]$Package, [string]$Log, [string]$Session,
     if($Format -eq 'Antigravity'){
       $doc['source_time_kind']='export_file_mtime';$doc['provider_scope']='agent platform; underlying model provider not exported'
       foreach($key in @('thinking_tokens','cache_read_tokens')){if($null -ne $usage.$key){$n=0L;if(-not [long]::TryParse([string]$usage.$key,[ref]$n) -or $n -lt 0){throw 'Antigravity 明细无效'};$doc[$key]=$n}}
+    }
+    if($Format -eq 'Grok'){
+      $doc['source_time_kind']='export_file_mtime';$doc['cache_read_tokens']=$cacheRead; $doc['cache_creation_tokens']=$cacheCreate; $doc['reasoning_tokens']=$reasoning
     }
     Write-YaAtomic $path $doc
     if (-not $old -or $old.session -cne $Session -or $old.task -cne $Task -or $old.total_tokens -ne $numbers.total_tokens) { Add-YaActualEvent $Package 'usage_snapshot' $doc }

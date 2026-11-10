@@ -1,9 +1,9 @@
 ﻿# YA 状态小窗（白底卡）。开源包通用版：布局、TOKEN / 经验调用统计逻辑沿用旧 YA 白底卡，不绑定任何一家机械软件。第三块是「任务完成度」（2026-11-10 改）：面板只显示两项「经验 已调用/未调用」（search 或本任务有检索）与「结果 已核对/未核对」（inspect 独立读回），完成度按这两项+已验收三段计；compare/draft/claim 只留在流程日志，不在面板计分。原说明：读经验库 流程.json 当前任务的五项自检（search/compare/draft/claim/inspect）过了几项，已验收才算 100%（2026-11-04 由原合格率改）。
 # 连接态只看 io\link.json（由同目录 ya_link.ps1 soft=软件名 pid=软件主窗口进程号 写入）：
-#   两段（2026-11-10）：握手读回+登记通过即显示「已连接 · 软件」；当前登记会话通过 Connect 轻读回验收后显示「已验收 · 软件」。
+#   两段（2026-11-10，2026-11-10 晚补）：握手读回+登记通过即显示「已连接 · 软件」；轻读回不算首连完成。关闭软件后用已存连接卡从零跑快通道通过（卡标 v=1）后，才显示「已验收 · 软件」。
 #   本窗口不探测、不附着、不修改任何机械软件，只读文件。
-# TOKEN：读 Agent 的 stdout 日志（Grok streaming-json usage / Codex / tokens used），日志路径来自 link.json 的 log 或环境变量 YALINK_USAGE_LOG。
-# 经验调用（2026-11-05 分列）：消耗.json generic 槽 calls = 通用；当前已连软件槽 calls + 连接卡命中(io\card_hits.json) = 软件。数字旁写「次 · 通用x·软件y」。
+# TOKEN：读 Agent 的 stdout 日志（Grok type=end / Codex / Antigravity），路径来自 link.json 的 log 或 YALINK_USAGE_LOG；指针有效时面板自动接入采集真实用量.ps1，写入 io\actual_usage.json（source_kind=runtime_measured）。没有有效用量显示「未统计」。新会话不沿用上一任务的用量文案。
+# 经验调用（2026-11-05 分列，2026-11-10 补）：消耗.json generic 槽 calls + artifacts\card-calls.jsonl（skill_search/skill_get/apply，含连接前）= 通用；当前已连软件槽 calls + 连接卡命中(io\card_hits.json) = 软件。数字旁写「次 · 通用x·软件y」。查通用卡计入「经验 已调用」，不要求软件已连接。
 # 经验库/新收：通用 = 经验库\槽\generic（索引+草稿）+ 经验库\通用技能库\索引.json；软件 = 经验库\槽\<当前已连软件槽>。写「通用x·软件y」，未连软件时软件侧「—」。连接没核对过（登记还在，但进程不在、未响应、窗口不可见、没有 pid、进程号读不了、state 不是 ok、槽号是 generic/all 或本包没有这个槽目录）时软件侧同样是「—」，不把残留 slot 算进去。槽号只是大小写不同，按小写槽计入。连接卡 hits 只进「软件调用」，不进任何库条数。
 # 状态与计数放在 %LOCALAPPDATA%\YAHud（或 YALINK_HUD_HOME），不放经验库。经验库默认是本文件夹上一级的 经验库\。
 # 右键：总计 / 重新计一次 / 全部重置 / 置顶 / 隐藏 / 退出；隐藏后在托盘（时钟旁 YA 图标）。位置记在 io\hud_pos.txt。
@@ -206,6 +206,7 @@ public class YaCard : Window {
   public YaCard(int pid, string io, string lib, string sOv, string aOv, string tOv, string iOv, bool preview) {
 
     previewMode = preview; nxPid = pid; ioDir = io; libDir = lib; statusOv = sOv; agentOv = aOv; statsOv = tOv; indexOv = iOv;
+    hudBorn = DateTime.UtcNow; Safe(WriteHudSession);
 
     posPath = System.IO.Path.Combine(io, "hud_pos.txt"); errLog = System.IO.Path.Combine(io, "hud_error.log");
 
@@ -951,7 +952,7 @@ public class YaCard : Window {
 
 
   // ---------- 通用软件连接态（io\link.json，ya.ps1 hud 写入）与数据喂入 ----------
-  string linkReason = "", linkSoft = "", linkSlot = "generic", linkState = "none"; DateTime linkChk = DateTime.MinValue, feedAt = DateTime.MinValue; bool linkLast, linkSlotBound; double feedStart; string feedSig = "", feedLog = "", feedAg = ""; bool cNoLog; double cardHits; string feedSwKey = ""; double feedSwT; bool swFresh; DateTime feedMt = DateTime.MinValue;
+  string linkReason = "", linkSoft = "", linkSlot = "generic", linkState = "none"; DateTime linkChk = DateTime.MinValue, feedAt = DateTime.MinValue, hudBorn = DateTime.MinValue, usageSyncAt = DateTime.MinValue, usageLogMt = DateTime.MinValue; bool linkLast, linkSlotBound; double feedStart; string feedSig = "", feedLog = "", feedAg = ""; bool cNoLog; double cardHits; string feedSwKey = ""; double feedSwT; bool swFresh; DateTime feedMt = DateTime.MinValue; long usageLogLen;
   [DllImport("user32.dll", EntryPoint = "IsWindowVisible")] static extern bool YaWinVisible(IntPtr h);
   Dictionary<string, object> LinkRead() { try { string p = statusOv != "" ? statusOv : System.IO.Path.Combine(ioDir, "link.json"); return File.Exists(p) ? ReadJson(p) : null; } catch { return null; } }
   bool LinkOk() {
@@ -975,8 +976,8 @@ public class YaCard : Window {
     else { linkState = "nopid"; linkLast = false; return false; }
     linkReason = YaEvidence.CheckRegistered(System.IO.Path.GetDirectoryName(libDir), ioDir, d);
     if (linkReason != "") { linkState = "evidence"; linkLast = false; return false; }
-    if (!YaEvidence.HasFrontendAcceptance(System.IO.Path.GetDirectoryName(libDir), ioDir, d)) {
-      linkState = "awaitingAcceptance"; linkLast = true; return true;   // 握手已通：显示「已连接」，软件侧计数生效；验收后才是「已验收」
+    if (!YaEvidence.HasFirstConnectComplete(System.IO.Path.GetDirectoryName(libDir), ioDir, d)) {
+      linkState = "awaitingAcceptance"; linkLast = true; return true;   // 握手已通：显示「已连接」；须从零快通道核验才是「已验收」
     }
     linkState = "ok"; linkLast = true; return true;
   }
@@ -993,8 +994,11 @@ public class YaCard : Window {
     return "\u672A\u8FDE\u63A5";
   }
   string LinkTip(bool agentOk) {
-    if (linkState == "ok") return (linkSoft == "" ? "\u5DF2\u8FDE\u63A5" : linkSoft) + " \u00B7 \u69FD " + linkSlot + " · 轻读回已验收";
-    if (linkState == "awaitingAcceptance") return (linkSoft == "" ? "已连接" : linkSoft) + " · 槽 " + linkSlot + " · 握手已通，轻读回验收后显示已验收";
+    if (linkState == "ok") return (linkSoft == "" ? "\u5DF2\u8FDE\u63A5" : linkSoft) + " \u00B7 \u69FD " + linkSlot + " · 从零快通道已核验，首连完成";
+    if (linkState == "awaitingAcceptance") {
+      bool light = YaEvidence.HasFrontendAcceptance(System.IO.Path.GetDirectoryName(libDir), ioDir, LinkRead());
+      return (linkSoft == "" ? "已连接" : linkSoft) + " · 槽 " + linkSlot + (light ? " · 轻读回已通，须关闭软件后用本卡从零跑快通道通过才算首连完成 / 已验收" : " · 握手已通；轻读回后仍须从零快通道核验才显示已验收");
+    }
     if (linkState == "none") return "\u672A\u8FDE\u63A5";
     return LinkText() + (linkReason == "" ? "" : " · " + linkReason);
   }
@@ -1033,7 +1037,8 @@ public class YaCard : Window {
           if ((lap > 0 && hp == lap) || (lap <= 0 && lt > 0 && ht >= lt - 7200 && ht <= lt + 600)) hits += 1; }
         cardHits = hits; } } catch { }
       }
-      genAbs = gc; calls = gc + (soFeed ? (softCalls + cardHits) : 0); if (!bGenOk) { bGen = gc; bGenOk = true; }
+      double cardCallHits = CountCardCalls();
+      genAbs = gc + cardCallHits; calls = genAbs + (soFeed ? (softCalls + cardHits) : 0); if (!bGenOk) { bGen = genAbs; bGenOk = true; }
       string ag = L == null ? "" : Str(L, "agent");
       var d = new Dictionary<string, object>();
       d["nx_pid"] = nxPid; d["uses"] = calls; d["task_start"] = feedStart; d["agent"] = ag; d["agent_switch"] = log; d["soft"] = linkSoft; d["slot"] = linkSlot;
@@ -1042,6 +1047,7 @@ public class YaCard : Window {
       string sig = js.Serialize(d);
       string sfp = System.IO.Path.Combine(ioDir, "exp_stats.json"); if (sig != feedSig || !File.Exists(sfp) || File.GetLastWriteTimeUtc(sfp) != feedMt) { feedSig = sig; File.WriteAllText(sfp, sig, new UTF8Encoding(false)); feedMt = File.GetLastWriteTimeUtc(sfp); }
       if (log != feedLog) { feedLog = log; File.WriteAllText(System.IO.Path.Combine(ioDir, "usage_log.txt"), log, new UTF8Encoding(false)); }
+      TrySyncUsage(log);
       int ap = L == null ? 0 : (int)Num(L, "agent_pid"); string a2 = ap + "|" + ag;
       if (agentOv == "" && a2 != feedAg) { feedAg = a2; var a = new Dictionary<string, object>(); a["pid"] = ap; a["agent"] = ag; a["time"] = Epoch(); File.WriteAllText(System.IO.Path.Combine(ioDir, "agent.json"), js.Serialize(a), new UTF8Encoding(false)); }
     } catch { }
@@ -1362,10 +1368,44 @@ public class YaCard : Window {
 
   Dictionary<string,object> CurrentTask(Dictionary<string,object> flow) {
     if(flow==null) return null;
-    var current=Has(flow,"current") ? flow["current"] as Dictionary<string,object> : null;
-    if(current!=null) return current;
-    var history=Has(flow,"history") ? JArr(flow["history"]) : null;
-    return history!=null && history.Length>0 ? history[history.Length-1] as Dictionary<string,object> : null;
+    return Has(flow,"current") ? flow["current"] as Dictionary<string,object> : null;
+  }
+  string CardCallsPath() {
+    string baseDir=System.IO.Path.GetDirectoryName(libDir);
+    if(string.Equals(System.IO.Path.GetFileName(baseDir),"工作区",StringComparison.OrdinalIgnoreCase))
+      return System.IO.Path.Combine(System.IO.Path.GetDirectoryName(baseDir),"artifacts","card-calls.jsonl");
+    return System.IO.Path.Combine(baseDir,"card-calls.jsonl");
+  }
+  int CountCardCalls() {
+    int n=0;
+    try {
+      string f=CardCallsPath(); if(!File.Exists(f)) return 0;
+      foreach(string line in File.ReadAllLines(f,Encoding.UTF8)) {
+        if(string.IsNullOrWhiteSpace(line)) continue;
+        try { var row=js.Deserialize<Dictionary<string,object>>(line); string kind=Str(row,"kind"); if(kind=="skill_search"||kind=="skill_get"||kind=="apply") n++; } catch { }
+      }
+    } catch { }
+    return n;
+  }
+  void WriteHudSession() {
+    try {
+      var d=new Dictionary<string,object>(); d["started_utc"]=hudBorn.ToString("o"); d["pid"]=Process.GetCurrentProcess().Id;
+      File.WriteAllText(System.IO.Path.Combine(ioDir,"hud_session.json"),js.Serialize(d),new UTF8Encoding(false));
+    } catch { }
+  }
+  void TrySyncUsage(string log) {
+    try {
+      if(string.IsNullOrEmpty(log)||!File.Exists(log)) return;
+      if((DateTime.UtcNow-usageSyncAt).TotalSeconds<8) return;
+      var mt=File.GetLastWriteTimeUtc(log); long len=new FileInfo(log).Length;
+      if(mt==usageLogMt && len==usageLogLen && (DateTime.UtcNow-usageSyncAt).TotalSeconds<30) return;
+      usageLogMt=mt; usageLogLen=len; usageSyncAt=DateTime.UtcNow;
+      string collector=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(libDir),"YA插件","采集真实用量.ps1");
+      if(!File.Exists(collector)) return;
+      var psi=new ProcessStartInfo("powershell.exe","-NoProfile -ExecutionPolicy Bypass -File \""+collector+"\" -Log \""+log+"\" -AutoFromLog");
+      psi.CreateNoWindow=true; psi.UseShellExecute=false; psi.WindowStyle=ProcessWindowStyle.Hidden;
+      Process.Start(psi);
+    } catch { }
   }
   List<Dictionary<string,object>> IndexEntries(string dir) {
     var result=new List<Dictionary<string,object>>();
@@ -1529,6 +1569,9 @@ public class YaCard : Window {
   void ShowActualUsage() {
     var d = ReadJson(System.IO.Path.Combine(ioDir, "actual_usage.json"));
     bool known = d != null && Str(d, "source_kind") == "runtime_measured";
+    DateTime collected;
+    if (known && (!DateTime.TryParse(Str(d, "collected_utc"), IC, System.Globalization.DateTimeStyles.RoundtripKind, out collected) || collected.ToUniversalTime() < hudBorn))
+      known = false;
     vTokn.Text = known ? Big(Num(d, "task_tokens")) : "未统计";
     uTokn.Text = known ? "tok" : "";vTokn.FontSize=known ? 24 : 18;
     vTok.Text = "待对照"; uTok.Text = "Token 节省";
@@ -1581,9 +1624,10 @@ public class YaCard : Window {
       else continue;
       retrievalSeconds+=Num(d,"elapsed_ms")/1000.0;
     }
-    int calls=searches+reads;
+    int fileCalls=CountCardCalls();
+    int calls=searches+reads+fileCalls;
     vUse.Text=calls.ToString(IC); uUse.Text="次";
-    vUse.ToolTip="检索 "+searches+" 次 · 读取全文 "+reads+" 次";
+    vUse.ToolTip="检索 "+searches+" 次 · 读取全文 "+reads+" 次 · 通用卡 "+fileCalls+" 次（含连接前 card-calls.jsonl）";
     vLib.Text=verified.ToString(IC); uLib.Text="条";
     if(verified>0) { string val,unit; Dur(measuredSeconds,out val,out unit); vTime.Text=val;uTime.Text=unit; }
     else { vTime.Text="未统计";uTime.Text=""; }
@@ -1915,10 +1959,10 @@ public class YaCard : Window {
     taskKey = key;
     var cur = CurrentTask(d);
     int oldPct = taskPct; bool oldKnown = taskKnown;
-    if (cur == null) {
-      taskKnown = false; taskDone = false; taskPct = -1; taskWord = "\u672a\u5f00\u4efb\u52a1";
-      taskSub = "\u5F00\u4EFB\u52A1\u540E\u81EA\u52A8\u8BA1";
-      taskReport = "\u4efb\u52a1\u5b8c\u6210\u5ea6\n\u5f53\u524d\u6ca1\u6709\u4efb\u52a1";
+    if (cur == null || mt < hudBorn) {
+      taskKnown = false; taskDone = false; taskPct = -1; taskWord = "\u672a\u5f00\u4efb\u52a1"; taskExp = false; taskRes = false;
+      taskSub = cur != null && mt < hudBorn ? "新会话不显示上一任务的完成度或文案" : "\u5F00\u4EFB\u52A1\u540E\u81EA\u52A8\u8BA1";
+      taskReport = taskSub;
       return;
     }
     string status = JText(cur, "status"), title = JText(cur, "title");

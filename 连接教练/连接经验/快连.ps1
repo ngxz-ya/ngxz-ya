@@ -272,17 +272,33 @@ $r.alive = [bool]$pr
   Mark '前台复核'
 
   $okAll = $linkOk -and $fgOk -and [bool]$fr.alive
+  $coldStart = ($before.Count -eq 0)
   # 连接记录（包外）：可作为连接卡的通道核验依据。
   $recDir = Join-Path ([YaEvidence]::Work($pkg, $slot)) 'records'
   if (-not (Test-Path -LiteralPath $recDir)) { New-Item -ItemType Directory -Path $recDir -Force | Out-Null }
-  $rec = [ordered]@{ time = $t0.ToString('s'); slot = $slot; card = [string]$card.id; card_v = [int]$card.v; soft = $soft; pid = $newPid; nonce = $nonce; ok = $okAll; fg_check = [int]$fr.fg_check; title = [string]$fr.title; agent = $agent; agent_pid = $agentPid; usage_log = $log; params = $params; marks = $marks; readback = $txt; package = $pkg }
+  $rec = [ordered]@{ time = $t0.ToString('s'); slot = $slot; card = [string]$card.id; card_v = [int]$card.v; soft = $soft; pid = $newPid; nonce = $nonce; ok = $okAll; cold_start = $coldStart; fg_check = [int]$fr.fg_check; title = [string]$fr.title; agent = $agent; agent_pid = $agentPid; usage_log = $log; params = $params; marks = $marks; readback = $txt; package = $pkg }
   $recPath = Join-Path $recDir ($slot + '_' + $t0.ToString('yyyyMMdd_HHmmss') + '.json')
   [IO.File]::WriteAllText($recPath, (ConvertTo-Json -InputObject $rec -Depth 5), (New-Object Text.UTF8Encoding $true))
   Write-Output ('record: ' + $recPath)
   Write-Output ('timing: ' + (($marks.Keys | ForEach-Object { $_ + '=' + $marks[$_] + 's' }) -join ' | '))
   Write-Output ('total_seconds: ' + [Math]::Round(((Get-Date) - $t0).TotalSeconds, 1))
   if ($okAll) {
-    Write-Output ('state: 前台通道就绪 · 待任务验收 · ' + $soft + '（pid=' + $newPid + '）')
+    if ($coldStart) {
+      $card.v = 1
+      $verifyNote = ('从零快通道核验通过 ' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + '（启动时本机无该软件进程，已拉起并读回、登记、前台复核）；pid=' + $newPid + ' record=' + $recPath)
+      if ($card.PSObject.Properties['核验']) { $card.核验 = $verifyNote } else { $card | Add-Member -NotePropertyName 核验 -NotePropertyValue $verifyNote -Force }
+      [IO.File]::WriteAllText($cardPath, (ConvertTo-Json -InputObject $card -Depth 8), (New-Object Text.UTF8Encoding $true))
+      try { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here '连接经验.ps1') rebuild | Out-Null } catch { }
+      $ioDir = Join-Path (Get-YaPackageHudHome $pkg) 'io'
+      if (-not (Test-Path -LiteralPath $ioDir)) { New-Item -ItemType Directory -Path $ioDir -Force | Out-Null }
+      $rel = $cardPath.Substring($pkg.Length).TrimStart('\')
+      $ev = [ordered]@{ schema = 1; package_id = [YaEvidence]::Identity($pkg); slot = $slot; card = [string]$card.id; card_file = $rel; card_sha256 = [YaEvidence]::Hash($cardPath); cold_start = $true; result = 'OK'; pid = $newPid; record = $recPath; utc = [DateTime]::UtcNow.ToString('o') }
+      Write-YaAtomic (Join-Path $ioDir 'fastpath-verified.json') $ev
+      Write-Output ('verified: 卡 ' + $card.id + ' 已标 v=1（从零快通道通过，首连完成）')
+    } else {
+      Write-Output 'note: 启动时软件进程已在，本次快连不算从零核验，不改 v=1。须先关闭软件，再用本卡从零跑快通道通过，才算首连完成。'
+    }
+    Write-Output ('state: 前台通道就绪 · ' + $(if ($coldStart) { '从零快通道已核验 · ' } else { '待从零快通道核验 · ' }) + $soft + '（pid=' + $newPid + '）')
     Write-Output 'next: 用 连接软件.ps1 -Action Connect -TaskFile 完成同窗口实际修改和独立读回。'
     Write-Output 'RESULT: OK'; exit 0
   } else {

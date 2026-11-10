@@ -15,6 +15,23 @@ Assert-YaIsolatedPackage (Split-Path (Split-Path $here -Parent) -Parent)
 $indexPath = Join-Path $here '索引.json'
 $enc = New-Object Text.UTF8Encoding $true
 $required = @('slot','别名','t','触发条件','适用前提','参数','启动方式','步骤','前台判定','读回','失败处理','证据','未验证','v','核验')
+
+function Test-ConnFastpathComplete($c) {
+  $fp = $c.快通道
+  if ($null -eq $fp) { return '缺字段: 快通道。卡必须写明从软件未运行状态拉起、桥接自动加载、读回的完整步骤。没有登记。' }
+  foreach ($k in @('适配','进程名','读回含','等待秒')) {
+    $v = $null; try { $v = $fp.$k } catch { $v = $null }
+    if ($null -eq $v -or ([string]$v).Trim() -eq '') { return ('快通道缺字段: ' + $k + '。没有登记。') }
+  }
+  $cold = $null; try { $cold = $fp.从零 } catch { $cold = $null }
+  if ($null -eq $cold) { return '缺字段: 快通道.从零（须含 拉起软件、桥接自动加载、读回：从软件未运行/关机状态拉起软件、桥接自动加载、读回的完整步骤）。没有登记。' }
+  foreach ($k in @('拉起软件','桥接自动加载','读回')) {
+    $v = $null; try { $v = $cold.$k } catch { $v = $null }
+    if ($null -eq $v -or ([string]$v).Trim().Length -lt 8) { return ('快通道.从零 缺完整步骤: ' + $k + '。须写清从软件未运行状态如何拉起、桥接如何自动加载、如何读回。没有登记。') }
+  }
+  return $null
+}
+
 $bad = '破解|注册机|盗版|crack|keygen|patch许可|绕过许可|license\s*key|许可密钥'
 function Get-Args([string[]]$a) {
   $m = @{}
@@ -187,7 +204,8 @@ try {
       if ($raw -match $bad) { throw '卡里有禁止写入的词（侵权或不合法连接相关），没有登记。' }
       $c = $raw | ConvertFrom-Json
       foreach ($k in $required) { if ($null -eq $c.$k -or ([string]$c.$k).Trim() -eq '') { throw ('缺字段: ' + $k + '。模板见 说明.md 第三节。没有登记。') } }
-      if (-not (Test-ConnStoredV $c.v $false)) { throw 'add 只收候选 v=0。v=1 只能由使用者核验后在卡里手改并写「核验」。没有登记。' }
+      if (-not (Test-ConnStoredV $c.v $false)) { throw 'add 只收候选 v=0。v=1 只能在关闭软件后用本卡从零跑快通道通过时由快连写入，不能在 add 或首连握手后手改。没有登记。' }
+      $fpErr = Test-ConnFastpathComplete $c; if ($fpErr) { throw $fpErr }
       $c.v = 0
       if (([string]$c.slot).ToLower() -ne $slot) { throw ('卡里 slot=' + (Show-ConnId ([string]$c.slot)) + ' 和参数 slot=' + (Show-ConnId $slot) + ' 不一致，没有登记。') }
       $lead = Get-ConnLead ([string]$c.启动方式)
@@ -208,7 +226,7 @@ try {
       try { $cnt = Build-Index } catch { Remove-Item -LiteralPath $dst -Force; throw }
       Write-Output ('added: ' + $id)
       Write-Output ('f: 连接教练\连接经验\' + $slot + '\' + $id + '.json')
-      Write-Output 'v: 0（候选，使用者核验后才可改 1）'
+      Write-Output 'v: 0（候选。关闭软件后用本卡从零跑 快连.ps1 通过才标 v=1；首连握手/轻读回不算完成）'
       Write-Output ('count: ' + $cnt)
       Write-Output ('next: 再在软件槽写一条短草稿：ya.ps1 exp_recall q=连接 slot=' + $slot + ' tag=连接，然后 exp_done c=招式 tag=连接 slot=' + $slot + ' t=一句话（详卡见 连接教练\连接经验\' + $slot + '\）')
       Write-Output 'RESULT: OK'
