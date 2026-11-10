@@ -20,3 +20,8 @@ foreach($a in $asmList){
   $res+=$row
 }
 [IO.File]::WriteAllText($out,([ordered]@{schema=1;generated_utc=[DateTime]::UtcNow.ToString('o');assemblies=$res}|ConvertTo-Json -Depth 8 -Compress),[Text.UTF8Encoding]::new($true))
+# one member per line (grep-friendly; the JSON above is a single long line — do not Select-String it with -Context)
+$lines=New-Object System.Collections.Generic.List[string]
+foreach($r in $res){foreach($ty in $r.types){$lines.Add($ty.type+' : '+$ty.base);foreach($m in $ty.methods){$lines.Add($ty.type+'::'+$m)};foreach($q in $ty.properties){$lines.Add($ty.type+'.'+$q)}}}
+$txt=[IO.Path]::ChangeExtension($out,'.members.txt');[IO.File]::WriteAllLines($txt,$lines,[Text.UTF8Encoding]::new($true))
+Write-Output ('MEMBERS_TXT: '+$txt+' （一行一个成员，查成员用 Select-String 这个文件）')

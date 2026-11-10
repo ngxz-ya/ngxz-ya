@@ -1,5 +1,6 @@
 ﻿# 第一步先读 AGENTS.md「第 0 步」。通用「接口探测」（软件无关）：写任何桥接调用前，先列出本机已装版本程序集里真实存在的类型/方法/属性，写成能力文件；只准用里面有的成员。
 # 列能力：powershell -NoProfile -ExecutionPolicy Bypass -File 适配器\接口探测.ps1 -Assemblies "<install_dirs 内的 .dll>,<...>" [-TypeFilter 正则] [-Out 能力文件.json]
+# 输出：能力 JSON（单行，勿对它用 Select-String -Context）+ 同名 .members.txt（一行一个成员，查成员用它）。
 # 核对成员：... -Assemblies <同上> -Check "命名空间.类型::成员,命名空间.类型::成员"   缺失则退出码 1，并列出同类型里相近的可用成员（含基类）。
 # 只读：独立进程反射加载，不启动软件。程序集必须位于 本机定位.json install_dirs 内。属性 X 会以 X 和 get_X 两种写法都可核对。
 param([Parameter(Mandatory=$true)][string[]]$Assemblies,[string]$TypeFilter='.',[string]$Out,[string[]]$Check)
