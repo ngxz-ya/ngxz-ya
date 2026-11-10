@@ -12,6 +12,7 @@ try{
   if(-not $slot){throw 'SOFTWARE_SLOT_REQUIRED'}
   $local=Join-Path $pkg ('连接教练\连接经验\'+$slot)
   if($Action -eq 'New'){
+    $sg=@(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '连接教练\来源闸.ps1') -Check);if($LASTEXITCODE -ne 0){$sg|ForEach-Object{Write-Output $_};exit 5}
     foreach($name in @('driver.ps1','reader.ps1','reader.settings.json','方法.草稿.json')){if(Test-Path -LiteralPath (Join-Path $local $name)){throw 'REFUSE_OVERWRITE: existing local method is preserved; use -Action Check'}}
     $work=Join-Path ([YaEvidence]::Work($pkg,$slot)) ('preparation-'+[guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($local)|Out-Null;[IO.Directory]::CreateDirectory($work)|Out-Null

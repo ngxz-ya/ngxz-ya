@@ -77,10 +77,16 @@ Say '4 复用：本机没有该软件的连接经验（首连）。'
 Write-Output ''
 Write-Output 'NEED_AGENT_METHOD — 包内不含任何软件专属连接方法，下面每一步由你完成；每个大步骤前先跑越界审计：'
 Write-Output ('  工作目录：cd "'+$rt+'"   软件槽：'+$Slot+'   证据目录：'+(Join-Path $ws 'artifacts'))
-Write-Output '  a) 上网找合法方法：官方 API / SDK 文档、GitHub「<软件名> MCP / GUI bridge / active document」、MCP Registry。只用 本机定位.json install_dirs 里的文件核对版本与接口。'
+Write-Output '  a) 【硬闸】先上网搜合法的开源/官方连接方案：官方 API / SDK 文档、GitHub「<软件名> API / MCP / bridge / automation」、MCP Registry。读完逐条登记（≥2 条不同网址+要点）：'
+Write-Output '     .\连接教练\来源闸.ps1 -Add -Url <网址> -Points "要点：用哪个接口、怎么加载、注意什么" -Query "搜索词"   ；没登记合格，b) 准备接入 和 c) 编译桥接 都会拒绝（退出码 5）。'
+$sg=@(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $rt '连接教练\来源闸.ps1') -Check)
+if($LASTEXITCODE -eq 0){Write-Output ('  SOURCES_GATE: OPEN '+($sg|Select-Object -First 1))}else{Write-Output '  SOURCES_GATE: CLOSED — 现在只能做 a)（上网搜索+登记来源），不得跳到 b)/c)。'}
+Write-Output '     只用 本机定位.json install_dirs 里的文件核对版本与接口。'
 Write-Output ('  b) 生成驱动草稿：.\适配器\准备接入.ps1 -Software "'+$Software+'"')
 Write-Output '  b2) 写任何接口调用前先探测本机版本真实有的成员：.\适配器\接口探测.ps1 -Assemblies <install_dirs 内官方程序集> ；用到的成员再 -Check "类型::成员,..."，缺失就换能力文件里有的成员（别照搬别的版本的示例）。'
-Write-Output ('  c) 桥接源码只写在 连接教练\连接经验\'+$Slot+'\ 或 artifacts 内；编译：.\适配器\编译桥接.ps1 -Source <.cs> -Out <dll> -References <install_dirs 内的官方程序集>')
+Write-Output ('  c) 桥接源码只写在 连接教练\连接经验\'+$Slot+'\ 或 artifacts 内；编译：.\适配器\编译桥接.ps1 -Source <.cs> -Out <dll> -References <install_dirs 内的官方程序集> [-Versioned]')
+Write-Output '     桥接通用要求（见 适配器\说明.md）：工作文件先查是否存在→存在就打开、打不开换唯一文件名再新建；拿到活动文档/部件先判空，空就回错误不执行；任何异常都回完整 JSON（带 protocol/action/request、ok=false、error=原文）。'
+Write-Output '     改了桥接再编译 = RELOAD_REQUIRED：软件里已加载的是旧版，必须卸载/重载或重启软件后，用 QUERY_SESSION 核对 bridge_build 再测。'
 Write-Output '  d) 启动软件（脱离 Agent 作业、可带只作用于本次的环境变量）：.\适配器\启动软件.ps1 -Exe <install_dirs 内可执行文件> [-Env 名=值] [-ArgumentLine "参数原文"]'
 Write-Output '     启动软件.ps1 自带弹窗守护：错误弹窗会被静默关闭并记录（退出码 7 = 失败点）；改模期间可另开 .\适配器\弹窗守护.ps1 -TargetPid <PID> -Seconds 600 -Dismiss -RetryScript <你的重建+重启脚本> -MaxRetries 2 做有限次自愈，到上限如实报告。'
 Write-Output '     软件若自动加载包外自定义/插件目录：用官方文档的环境变量/参数指向 artifacts 内空配置，不读取不加载那些目录。'

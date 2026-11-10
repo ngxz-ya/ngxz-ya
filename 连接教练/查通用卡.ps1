@@ -12,13 +12,18 @@ if(-not $Log){
 }
 [IO.Directory]::CreateDirectory((Split-Path $Log -Parent))|Out-Null
 $qs=Join-Path $pkg '经验库\通用技能库\00_索引\查询.ps1'
-$default=@{'连接前'=@('启动','读回','接口','自动化');'建模前'=@('尺寸编号','建模','拉伸','验证')}
+$default=@{'连接前'=@('启动','读回','接口','自动化','桥接');'建模前'=@('尺寸编号','建模','拉伸','验证','桥接')}
+# -Get/-Apply 没显式给 -Stage 时，阶段跟随本日志里最近一次 skill_search（R8：建模前采用的卡被记成了 连接前）
+if(($Apply -or $Get) -and -not $PSBoundParameters.ContainsKey('Stage') -and [IO.File]::Exists($Log)){
+  $ls=@([IO.File]::ReadAllLines($Log,[Text.Encoding]::UTF8)|Where-Object{$_ -match '"kind":"skill_search"'})|Select-Object -Last 1
+  if($ls){try{$Stage=($ls|ConvertFrom-Json).stage}catch{}}
+}
 function Put($o){[IO.File]::AppendAllText($Log,(($o|ConvertTo-Json -Depth 8 -Compress)+"`n"),[Text.UTF8Encoding]::new($false))}
 $now=[DateTime]::UtcNow.ToString('o')
 if($Apply){
   if(-not $How){throw 'APPLY_NEEDS_HOW: -Apply 必须同时写 -How 说明用在哪一步'}
   Put ([ordered]@{utc=$now;stage=$Stage;kind='apply';id=$Apply;how=$How})
-  Write-Output ('CARD_APPLIED: '+$Apply+' -> '+$Log);exit 0
+  Write-Output ('CARD_APPLIED: '+$Apply+' stage='+$Stage+' -> '+$Log+' （连接软件.ps1 Connect/Run 会把采用过的卡自动写进任务 JSON 的 used_general_cards）');exit 0
 }
 if($Get){
   foreach($id in $Get){

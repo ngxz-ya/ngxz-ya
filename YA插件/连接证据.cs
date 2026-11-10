@@ -98,7 +98,10 @@ public static class YaEvidence {
         }
         if (!done) throw new System.IO.InvalidDataException("CHANNEL_FRAME_TOO_LARGE");
         var reply=serializer.Deserialize<System.Collections.Generic.Dictionary<string,object>>(utf8.GetString(data.ToArray()));
-        foreach (string key in new string[]{"protocol","action","request"}) if (S(reply,key)!=S(message,key)) throw new System.IO.InvalidDataException("WRONG_REPLY_"+key);
+        // Surface the bridge's own error text (R8: a NullReferenceException inside the bridge surfaced only as WRONG_REPLY_protocol).
+        string rawReply=utf8.GetString(data.ToArray()); if (rawReply.Length>800) rawReply=rawReply.Substring(0,800);
+        string bridgeError=S(reply,"error"); if (bridgeError=="") bridgeError=S(reply,"message");
+        foreach (string key in new string[]{"protocol","action","request"}) if (S(reply,key)!=S(message,key)) throw new System.IO.InvalidDataException("WRONG_REPLY_"+key+(bridgeError!=""?" bridge_error="+bridgeError:"")+" raw_reply="+rawReply);
         if (message.ContainsKey("nonce") && S(reply,"nonce")!=S(message,"nonce")) throw new System.IO.InvalidDataException("WRONG_REPLY_nonce");
         proc.Refresh();
         if (proc.HasExited || proc.StartTime.ToUniversalTime().Ticks.ToString()!=start) throw new System.InvalidOperationException("SOFTWARE_SESSION_CHANGED");
@@ -155,6 +158,30 @@ public static class YaEvidence {
     } catch (System.TimeoutException) { return "channel-unavailable"; }
       catch (System.UnauthorizedAccessException) { return "channel-access-denied"; }
       catch { return "invalid-channel-evidence"; }
+  }
+  class LiveState { public string Result; public System.DateTime Next; public int Delay; public System.DateTime Task; }
+  static readonly System.Collections.Generic.Dictionary<string,LiveState> live=new System.Collections.Generic.Dictionary<string,LiveState>();
+  // HUD liveness (R8: the panel reconnected every ~1.6 s and flooded the bridge log). Connect once after registration and
+  // again only when a new task request appears (operation_request.json changes); failures back off 2 s -> 4 -> ... -> 30 s.
+  // Process exit/restart is still detected every poll without touching the pipe (CheckCore checks the process first).
+  static string LiveChannel(System.Collections.Generic.IDictionary<string,object> r, int pid, string start, string io) {
+    string key=S(r,"probe_pipe")+"|"+pid.ToString(System.Globalization.CultureInfo.InvariantCulture)+"|"+start;
+    System.DateTime task=System.DateTime.MinValue;
+    try { string f=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(io.TrimEnd('\\')),"operation_request.json"); if (System.IO.File.Exists(f)) task=System.IO.File.GetLastWriteTimeUtc(f); } catch {}
+    var now=System.DateTime.UtcNow; LiveState st;
+    lock (live) {
+      if (live.TryGetValue(key,out st) && st.Task==task) {
+        if (st.Result=="") return "";
+        if (now<st.Next) return st.Result;
+      }
+    }
+    string res=CheckChannel(r,pid,start,true);
+    lock (live) {
+      LiveState old; int delay=2000;
+      if (live.TryGetValue(key,out old) && old.Task==task && old.Result!="" && res!="") delay=System.Math.Min(30000,System.Math.Max(2000,old.Delay*2));
+      var ns=new LiveState(); ns.Result=res; ns.Next=now.AddMilliseconds(delay); ns.Delay=delay; ns.Task=task; live[key]=ns;
+    }
+    return res;
   }
   public static string Check(string pkg, string io, System.Collections.Generic.IDictionary<string, object> link) {
     return CheckCore(pkg, io, link, false);
@@ -238,7 +265,7 @@ public static class YaEvidence {
       var proc = System.Diagnostics.Process.GetProcessById(int.Parse(S(c, "pid")));
       if (proc.HasExited || proc.StartTime.ToUniversalTime().Ticks.ToString() != S(c, "process_start")) return "wrong-process";
       if (S(link, "readback_sha256") != Hash(file)) return "changed-readback";
-      return CheckChannel(r,proc.Id,S(c,"process_start"),registered);
+      return registered ? LiveChannel(r,proc.Id,S(c,"process_start"),io) : CheckChannel(r,proc.Id,S(c,"process_start"),false);
     } catch { return "missing-or-invalid-evidence"; }
   }
 }

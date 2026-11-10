@@ -11,6 +11,19 @@ try{
   @{status='CONNECT_TASK_REQUIRED';connected=$false;live_link=$false;next='先用 -Action Check 检查环境，前台通道登记后用 Connect -TaskFile 本次任务.json 验收'}|ConvertTo-Json
   exit 1
  }
+ # 采用过的通用卡（card-calls.jsonl 里 kind=apply）自动写进任务 JSON 的 used_general_cards（不进 used_experiences：那里只放本机已实测的软件经验）
+ if($Action -in @('Connect','Run') -and $TaskFile -and (Test-Path -LiteralPath $TaskFile)){
+  try{$cl=Join-Path (Split-Path $pkg -Parent) 'artifacts\card-calls.jsonl'
+   if(Test-Path -LiteralPath $cl){
+    $ap=@([IO.File]::ReadAllLines($cl,[Text.Encoding]::UTF8)|Where-Object{$_ -match '"kind":"apply"'}|ForEach-Object{try{$_|ConvertFrom-Json}catch{}}|Where-Object{$_ -and $_.id})
+    if($ap.Count){
+     $tj=Get-Content -LiteralPath $TaskFile -Raw -Encoding UTF8|ConvertFrom-Json
+     $have=@($tj.used_general_cards|Where-Object{$_}|ForEach-Object{[string]$_.id})
+     $add=@($ap|Group-Object id|ForEach-Object{$_.Group[-1]}|Where-Object{$have -notcontains [string]$_.id}|ForEach-Object{[pscustomobject][ordered]@{id=[string]$_.id;how=[string]$_.how;stage=[string]$_.stage;utc=[string]$_.utc}})
+     if($add.Count){$tj|Add-Member -NotePropertyName used_general_cards -NotePropertyValue (@($tj.used_general_cards|Where-Object{$_})+$add) -Force
+      [IO.File]::WriteAllText([IO.Path]::GetFullPath($TaskFile),($tj|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))}
+    }}}catch{}
+ }
  # 建模前查通用卡（自动留证到 artifacts\card-calls.jsonl；Agent 自己也应先查并 -Apply 用到的卡）
  if($Action -in @('Connect','Run') -and $TaskFile -and (Test-Path -LiteralPath (Join-Path $pkg '连接教练\查通用卡.ps1'))){
   try{$ca=@('-Stage','建模前');try{$tj=Get-Content -LiteralPath $TaskFile -Raw -Encoding UTF8|ConvertFrom-Json;$kw=@($tj.keywords|Where-Object{$_});if($kw.Count){$ca+=@('-Q',(($kw|Select-Object -First 5) -join ','))}}catch{}

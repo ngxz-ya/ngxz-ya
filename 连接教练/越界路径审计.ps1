@@ -105,10 +105,28 @@ if($AgentLog){
 $envArgs=@('-Mode','Diff','-Quiet');if($EnvSnapshot){$envArgs+=@('-Snap',$EnvSnapshot)};if($LocateFile){$envArgs+=@('-LocateFile',$LocateFile)}
 $envOut=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '环境快照.ps1') @envArgs
 if($LASTEXITCODE -eq 2){try{$ej=($envOut -join "`n")|ConvertFrom-Json;foreach($c in @($ej.changes)){$hits.Add('env-changed: '+$c)}}catch{$hits.Add('env-changed: (unparsed) '+($envOut -join ' '))}}
+# reminder (not a failure): bridge rebuilt after the target software process started -> the process still runs the old bridge
+$reminders=New-Object System.Collections.Generic.List[string]
+try{
+  $ap=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\');$aw=$(if((Split-Path $ap -Leaf) -eq '工作区'){Split-Path $ap -Parent}else{$ap})
+  $bf=Join-Path $aw 'artifacts\bridge-builds.jsonl'
+  if([IO.File]::Exists($bf)){
+    $lb=[IO.File]::ReadAllLines($bf,[Text.Encoding]::UTF8)|Where-Object{$_}|Select-Object -Last 1|ConvertFrom-Json
+    if([int]$lb.build -gt 1){
+      $bt=[DateTime]::Parse([string]$lb.utc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+      $lf=$(if($LocateFile){$LocateFile}else{@((Join-Path $aw '本机定位.json'),(Join-Path $ap '本机定位.json'))|Where-Object{[IO.File]::Exists($_)}|Select-Object -First 1})
+      $idirs=@();if($lf -and [IO.File]::Exists($lf)){$idirs=@((Get-Content -LiteralPath $lf -Raw -Encoding UTF8|ConvertFrom-Json).install_dirs|Where-Object{$_}|ForEach-Object{[IO.Path]::GetFullPath([string]$_).TrimEnd('\')})}
+      foreach($pr in @(Get-Process -ErrorAction SilentlyContinue|Where-Object{$_.MainWindowHandle -ne 0})){
+        $pp=$null;try{$pp=$pr.Path}catch{};if(-not $pp){continue}
+        foreach($d in $idirs){if($pp.StartsWith($d+'\',[StringComparison]::OrdinalIgnoreCase)){try{if($pr.StartTime.ToUniversalTime() -lt $bt){$reminders.Add('BRIDGE_CHANGED_RELOAD_REQUIRED: 桥接 v'+$lb.build+' 编译于软件进程 '+$pr.Id+' 启动之后，该进程里还是旧桥接：先按官方方式卸载/重载或重启软件，再用 QUERY_SESSION 核对 bridge_build')}}catch{};break}}
+      }
+    }
+  }
+}catch{}
 $uniq=@($hits|Select-Object -Unique)
 if($uniq.Count -gt 0){
-  [ordered]@{status='OVERREACH_FAIL';hits=$uniq;allowed=@($allowed|Select-Object -Unique);next='ROUND FAILED: stop now, run no further step, report these paths to the user truthfully.'}|ConvertTo-Json -Depth 4
+  [ordered]@{status='OVERREACH_FAIL';hits=$uniq;reminders=@($reminders);allowed=@($allowed|Select-Object -Unique);next='ROUND FAILED: stop now, run no further step, report these paths to the user truthfully.'}|ConvertTo-Json -Depth 4
   exit 2
 }
-[ordered]@{status='OVERREACH_CLEAR';hits=@();allowed=@($allowed|Select-Object -Unique);next='OK: continue with this step only.'}|ConvertTo-Json -Depth 4
+[ordered]@{status='OVERREACH_CLEAR';hits=@();reminders=@($reminders);allowed=@($allowed|Select-Object -Unique);next=$(if($reminders.Count){'OK (no overreach), but act on reminders first: '+($reminders -join ' | ')}else{'OK: continue with this step only.'})}|ConvertTo-Json -Depth 4
 exit 0
