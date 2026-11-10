@@ -1,6 +1,6 @@
-﻿# YA 状态小窗（白底卡）。开源包通用版：布局、TOKEN / 经验调用统计逻辑沿用旧 YA 白底卡，不绑定任何一家机械软件。第三块是「任务完成度」：读经验库 流程.json 当前任务的五项自检（search/compare/draft/claim/inspect）过了几项，已验收才算 100%（2026-11-04 由原合格率改）。
+﻿# YA 状态小窗（白底卡）。开源包通用版：布局、TOKEN / 经验调用统计逻辑沿用旧 YA 白底卡，不绑定任何一家机械软件。第三块是「任务完成度」（2026-11-10 改）：面板只显示两项「经验 已调用/未调用」（search 或本任务有检索）与「结果 已核对/未核对」（inspect 独立读回），完成度按这两项+已验收三段计；compare/draft/claim 只留在流程日志，不在面板计分。原说明：读经验库 流程.json 当前任务的五项自检（search/compare/draft/claim/inspect）过了几项，已验收才算 100%（2026-11-04 由原合格率改）。
 # 连接态只看 io\link.json（由同目录 ya_link.ps1 soft=软件名 pid=软件主窗口进程号 写入）：
-#   进程、窗口和通道登记通过后显示待验收；当前登记会话通过 Connect 前台验收后显示连接成功。
+#   两段（2026-11-10）：握手读回+登记通过即显示「已连接 · 软件」；当前登记会话通过 Connect 轻读回验收后显示「已验收 · 软件」。
 #   本窗口不探测、不附着、不修改任何机械软件，只读文件。
 # TOKEN：读 Agent 的 stdout 日志（Grok streaming-json usage / Codex / tokens used），日志路径来自 link.json 的 log 或环境变量 YALINK_USAGE_LOG。
 # 经验调用（2026-11-05 分列）：消耗.json generic 槽 calls = 通用；当前已连软件槽 calls + 连接卡命中(io\card_hits.json) = 软件。数字旁写「次 · 通用x·软件y」。
@@ -476,7 +476,7 @@ public class YaCard : Window {
 
   void ConfirmShown() {
     var handle=new WindowInteropHelper(this).Handle;
-    if (previewMode || !IsVisible || WindowState == WindowState.Minimized || !YaWindow.InputVisible(nxPid,handle.ToInt64())) return;
+    if (previewMode || !IsVisible || WindowState == WindowState.Minimized || !YaWindow.UserVisible(nxPid,handle.ToInt64())) return;
     var request=YaEvidence.Read(System.IO.Path.Combine(ioDir,"hud_show_request.json"));
     string package=System.IO.Directory.GetParent(libDir).FullName;
     if(Convert.ToString(request["package_id"])!=YaEvidence.Identity(package) || !System.Text.RegularExpressions.Regex.IsMatch(Convert.ToString(request["request"]),"^[a-f0-9]{32}$") || (DateTime.UtcNow-DateTime.Parse(Convert.ToString(request["issued_utc"]),IC,System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime()).TotalSeconds>60)return;
@@ -976,15 +976,15 @@ public class YaCard : Window {
     linkReason = YaEvidence.CheckRegistered(System.IO.Path.GetDirectoryName(libDir), ioDir, d);
     if (linkReason != "") { linkState = "evidence"; linkLast = false; return false; }
     if (!YaEvidence.HasFrontendAcceptance(System.IO.Path.GetDirectoryName(libDir), ioDir, d)) {
-      linkState = "awaitingAcceptance"; linkLast = false; return false;
+      linkState = "awaitingAcceptance"; linkLast = true; return true;   // 握手已通：显示「已连接」，软件侧计数生效；验收后才是「已验收」
     }
     linkState = "ok"; linkLast = true; return true;
   }
   string LinkText() {
     string n = linkSoft == "" ? "" : linkSoft + " ";
     if (linkState == "recovery") return "连接待复核";
-    if (linkState == "awaitingAcceptance") return "通道就绪 · 待验收";
-    if (linkState == "ok") return "\u8FDE\u63A5\u6210\u529F" + (linkSoft == "" ? "" : " \u00B7 " + linkSoft);
+    if (linkState == "awaitingAcceptance") return "已连接" + (linkSoft == "" ? "" : " · " + linkSoft);
+    if (linkState == "ok") return "已验收" + (linkSoft == "" ? "" : " · " + linkSoft);
     if (linkState == "evidence") return n + "已打开 · 待读回";
     if (linkState == "lost") return n + "\u5DF2\u6389\u7EBF";
     if (linkState == "hang") return n + "\u672A\u54CD\u5E94";
@@ -993,7 +993,8 @@ public class YaCard : Window {
     return "\u672A\u8FDE\u63A5";
   }
   string LinkTip(bool agentOk) {
-    if (linkState == "ok") return (linkSoft == "" ? "\u5DF2\u8FDE\u63A5" : linkSoft) + " \u00B7 \u69FD " + linkSlot;
+    if (linkState == "ok") return (linkSoft == "" ? "\u5DF2\u8FDE\u63A5" : linkSoft) + " \u00B7 \u69FD " + linkSlot + " · 轻读回已验收";
+    if (linkState == "awaitingAcceptance") return (linkSoft == "" ? "已连接" : linkSoft) + " · 槽 " + linkSlot + " · 握手已通，轻读回验收后显示已验收";
     if (linkState == "none") return "\u672A\u8FDE\u63A5";
     return LinkText() + (linkReason == "" ? "" : " · " + linkReason);
   }
@@ -1589,7 +1590,8 @@ public class YaCard : Window {
     tTime.ToolTip="前台命令等待（未等同工程验收）："+commandSeconds.ToString("0.###",IC)+" 秒；软件执行及独立验证："+measuredSeconds.ToString("0.###",IC)+" 秒；检索/调取："+retrievalSeconds.ToString("0.###",IC)+" 秒。来源为持久化事件。";
 
     tLib.ToolTip="适配器回报不等于独立工程验收；点击查看原始事件。";
-    if(current!=null) dSub.Text="自检 "+taskPass+"/"+taskTotal+" · "+(verifiedMode=="batch" ? "批处理已验收" : Str(current,"status"));
+    hudCalls=calls;
+    if(current!=null) dSub.Text=TwoChecks()+" · "+(verifiedMode=="batch" ? "批处理已验收" : Str(current,"status"));
     try {
       var view=new Dictionary<string,object>();
       view["rendered_utc"]=DateTime.UtcNow.ToString("o");view["task_id"]=task;
@@ -1896,7 +1898,8 @@ public class YaCard : Window {
     }
   }
   // ---------- task completion (replaces pass rate, 2026-11-04): 经验库\流程.json current task, five self-checks ----------
-  bool taskKnown, taskDone, taskPulse; int taskPct = -1, taskPass, taskTotal; string taskWord = "\u672a\u5f00\u4efb\u52a1", taskReport = "", taskKey = "", taskSub = "";
+  bool taskKnown, taskDone, taskPulse, taskExp, taskRes; int hudCalls; int taskPct = -1, taskPass, taskTotal;
+  string TwoChecks() { return "经验 " + (taskExp || hudCalls > 0 ? "已调用" : "未调用") + " · 结果 " + (taskRes ? "已核对" : "未核对"); } string taskWord = "\u672a\u5f00\u4efb\u52a1", taskReport = "", taskKey = "", taskSub = "";
   static bool JFlag(Dictionary<string, object> it, string k) {
     object v; if (it == null || !it.TryGetValue(k, out v) || v == null) return false;
     if (v is bool) return (bool)v; string s = Convert.ToString(v, CultureInfo.InvariantCulture); return s == "1" || s.Equals("true", StringComparison.OrdinalIgnoreCase);
@@ -1920,17 +1923,21 @@ public class YaCard : Window {
     }
     string status = JText(cur, "status"), title = JText(cur, "title");
     object[] arr = JArr(cur.ContainsKey("checks") ? cur["checks"] : null);
-    int total = 0, pass = 0; var lines = new List<string>();
-    if (arr != null) foreach (object o in arr) { var it = o as Dictionary<string, object>; if (it == null) continue; total++; bool ok = JFlag(it, "pass"); if (ok) pass++; lines.Add((ok ? "\u2713 " : "\u00b7 ") + JText(it, "title", "id")); }
-    if (total == 0) total = 5;
+    // 面板只计两项：search→经验已调用，inspect→结果已核对；其余三项（compare/draft/claim）只留流程日志
+    bool expUsed = JFlag(cur, "retrieved"), resChecked = false; var lines = new List<string>();
+    if (arr != null) foreach (object o in arr) { var it = o as Dictionary<string, object>; if (it == null) continue; bool ok = JFlag(it, "pass"); string cid = JText(it, "id"); if (cid == "search" && ok) expUsed = true; if (cid == "inspect" && ok) resChecked = true; }
+    taskExp = expUsed; taskRes = resChecked;
+    lines.Add(((expUsed || hudCalls > 0) ? "\u2713 " : "\u00b7 ") + "经验 " + ((expUsed || hudCalls > 0) ? "已调用" : "未调用"));
+    lines.Add((resChecked ? "\u2713 " : "\u00b7 ") + "结果 " + (resChecked ? "已核对" : "未核对"));
+    int total = 2, pass = (expUsed ? 1 : 0) + (resChecked ? 1 : 0);
     taskPass = pass; taskTotal = total;
     taskDone = status == "\u5df2\u9a8c\u6536";   // 已验收
-    int pct = (int)Math.Round(100.0 * pass / total);
-    if (!taskDone && pct >= 100) pct = 99;          // five checks passed but not accepted yet: never show 100%
+    int pct = (int)Math.Round(100.0 * pass / 3);    // 三段：经验、结果、已验收
+    if (!taskDone && pass >= total) pct = 99;         // both checks passed but not accepted yet: never show 100%
     if (taskDone) pct = 100;
     taskPct = pct; taskKnown = true;
     if (pct == 99) taskWord = "\u5F85\u9A8C\u6536";
-    taskSub = "\u81ea\u68c0 " + pass + "/" + total + " \u00b7 " + (status == "" ? "\u8fdb\u884c\u4e2d" : status) + (title == "" ? "" : " \u00b7 " + title);
+    taskSub = TwoChecks() + " \u00b7 " + (status == "" ? "\u8fdb\u884c\u4e2d" : status) + (title == "" ? "" : " \u00b7 " + title);
     taskReport = "\u4efb\u52a1\u5b8c\u6210\u5ea6 " + (pct == 99 ? taskWord : pct + "%") + "\n" + taskSub + (lines.Count > 0 ? "\n\n" + string.Join("\n", lines.ToArray()) : "");
     if (oldKnown && oldPct != pct) taskPulse = true;
     else if (!oldKnown && (DateTime.UtcNow - mt).TotalSeconds <= 45) taskPulse = true;
@@ -1939,7 +1946,7 @@ public class YaCard : Window {
     ReadTask();
     if (vRate == null) return;
     // task checklist is self-report only; never treat it as connection success while evidence pending
-    string sub = taskKnown ? "\u81EA\u68C0 " + taskPass + "/" + taskTotal : "";
+    string sub = taskKnown ? TwoChecks() : "";
 
     if (!taskKnown || taskPct == 99) {
       vRate.Text = taskWord; uRate.Text = "";

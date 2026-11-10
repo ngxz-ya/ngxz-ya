@@ -63,7 +63,9 @@ if($f.PSObject.Properties.Name -contains 'bridge' -and $f.bridge){
   if($result['ok'] -ne $true -or $result['software_version'] -cne $c.software_version -or $result['bridge_sha256'] -cne $f.bridge_sha256){throw ('FRONTEND_REPLY_FAILED: '+[string]$result['error'])}
   if($Action -eq 'Check' -and $result['status'] -cne 'READY'){throw 'FRONTEND_NOT_READY'}
   if($Action -eq 'Execute'){
-   if($checked['document_id'] -and ($result['document_id'] -cne $checked['document_id'] -or $result['document_path'] -cne $checked['document_path'])){throw 'FRONTEND_DOCUMENT_CHANGED'}
+   # 同一文档判定（2026-11-10 R10）：document_id 不分大小写、路径规范化后比较；不同就把桥接原始回执存 Execute.reply.json 并在错误里给出两边的值，方便判断是桥接切换了活动文档还是只是写法不同。
+   $sameDoc=$false;try{$sameDoc=([string]$result['document_id'] -ieq [string]$checked['document_id']) -and ([IO.Path]::GetFullPath([string]$result['document_path']).TrimEnd('\') -ieq [IO.Path]::GetFullPath([string]$checked['document_path']).TrimEnd('\'))}catch{}
+   if($checked['document_id'] -and -not $sameDoc){Write-YaAtomic (Join-Path $c.directory 'Execute.reply.json') $result;throw ('FRONTEND_DOCUMENT_CHANGED: Check='+[string]$checked['document_id']+' '+[string]$checked['document_path']+'; Execute='+[string]$result['document_id']+' '+[string]$result['document_path']+'。桥接的 Execute 要在 Check 时的同一活动文档里建特征，再把副本另存到 output_path，不新建、不切换活动文档；回执里的 document_id/document_path 仍报活动文档。原始回执 Execute.reply.json')}
    if($result['status'] -cne 'EXECUTED' -or [string]$result['saved_file'] -ine $model -or -not [IO.File]::Exists($model) -or (Get-Item -LiteralPath $model).Length -eq 0){throw 'SOFTWARE_SAVE_REQUIRED'}
    $result['saved_sha256']=(Get-FileHash -LiteralPath $model).Hash
   }

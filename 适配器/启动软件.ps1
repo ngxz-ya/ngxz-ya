@@ -74,6 +74,22 @@ $rec=[ordered]@{schema=1;pid=$id;via=$via;interactive_desktop=$interactive;exe=$
 $out=Join-Path $Directory 'launch.json'
 [IO.File]::WriteAllText($out,($rec|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($true))
 if($dialogs.Count){Write-Output ('MODAL_DIALOG_FAILPOINT: 启动期间出现 '+$dialogs.Count+' 个错误弹窗（已静默关闭并记录到 '+(Join-Path $Directory 'dialogs.jsonl')+'）。这是失败点：若弹窗涉及非本轮生成的 DLL/启动目录，说明软件自动加载了包外内容，改用官方环境变量/参数指向本轮空配置后重启；若是本轮桥接，先 接口探测.ps1 -Check 再按本机程序集重编。record='+$out);exit 7}
+# 换新进程自动重绑 YA（2026-11-10 R10，软件无关）：本包登记的旧进程已退出、且是同一个可执行文件时，对新 PID 自动 ya_link prepare=1，面板从「已掉线」改为「已打开 · 待读回」；之后照常让新进程内桥接写 readback 再登记。
+if($hwnd){
+ try{
+  . (Join-Path $pkg 'YA插件\连接上下文.ps1')
+  $linkF=Join-Path (Join-Path (Get-YaPackageHudHome $pkg) 'io') 'link.json'
+  if(Test-Path -LiteralPath $linkF){
+   $old=Get-Content -LiteralPath $linkF -Raw -Encoding UTF8|ConvertFrom-Json
+   $oldAlive=$false;try{$op=Get-Process -Id ([int]$old.pid) -ErrorAction Stop;$oldAlive=($op.StartTime.ToUniversalTime().Ticks.ToString() -ceq [string]$old.process_start)}catch{}
+   $newExe='';try{$newExe=[string](Get-Process -Id $id -ErrorAction Stop).Path}catch{}
+   if($old.state -in @('ok','opened') -and $old.soft -and $old.slot -and $old.exe -and -not $oldAlive -and [int]$old.pid -ne $id -and ([string]$old.exe -ieq $newExe -or [string]$old.exe -ieq $exeFull)){
+    $rb=@(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg 'YA插件\ya_link.ps1') ('soft='+$old.soft) ('slot='+$old.slot) ('pid='+$id) 'prepare=1' 2>&1)
+    Write-Output ('YA_REBIND: 旧登记 PID '+$old.pid+' 已退出，YA 已改绑新进程 '+$id+'（已打开 · 待读回）；让新进程内桥接按新挑战写 readback，再 ya_link 登记。'+((@($rb)|Where-Object{$_ -match '^(challenge|readback):'}) -join ' '))
+   }
+  }
+ }catch{Write-Output ('YA_REBIND_SKIPPED: '+$_.Exception.Message)}
+}
 if($hwnd){Write-Output ('WINDOW_READY pid='+$id+' title="'+$title+'" ('+$rec.seconds+'s) record='+$out);Write-Output '下一步：确认窗口是正常主界面（不是错误对话框）→ 加载本包内桥接 → ya_link prepare/登记。';exit 0}
 if($exited){Write-Output ('PROCESS_EXITED pid='+$id+' （可能是启动器转交给子进程或启动失败）children='+(($kids|ForEach-Object{$_.name+':'+$_.pid}) -join ',')+' record='+$out);exit 4}
 Write-Output ('WINDOW_TIMEOUT pid='+$id+' 未在 '+$WaitSeconds+'s 内出现主窗口；进程保留，不杀不重启。检查是否卡在对话框/许可。record='+$out);exit 5

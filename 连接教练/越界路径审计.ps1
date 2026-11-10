@@ -83,6 +83,7 @@ function Test-One([string]$raw){
 }
 function Check-Text([string]$t){
   if(-not $t){return}
+  foreach($m in [regex]::Matches($t,'(?i)\b(mouse_event|keybd_event|SetCursorPos|SendInput)\b')){$hits.Add('simulated-input: '+$m.Value+' （禁止模拟键鼠抢前台或操作软件；窗口被遮挡不影响验收）')}
   foreach($m in [regex]::Matches($t,'(?i)(\$env:USERPROFILE|\$HOME\b|%USERPROFILE%|%HOMEPATH%|GetFolderPath|(?<![\w\\])~[\\/]|\.gitconfig|Get-PSDrive)')){$hits.Add('forbidden-token: '+$m.Value)}
   foreach($m in [regex]::Matches($t,'(?i)(\bsetx(\.exe)?\s|SetEnvironmentVariable\s*\([^)]*(User|Machine|EnvironmentVariableTarget)|\breg(\.exe)?\s+(add|delete|import|load|restore|copy)\b|\b(New-ItemProperty|Set-ItemProperty|Remove-ItemProperty|New-Item|Set-Item|Remove-Item|Rename-ItemProperty)\b[^\r\n|;]*\b(HKCU|HKLM|HKU|HKEY_[A-Z_]+|Registry::)|(CreateSubKey|DeleteSubKey\w*|DeleteValue)\s*\()')){$hits.Add('persistent-env-or-registry-write: '+$m.Value)}
   foreach($m in [regex]::Matches($t,'(?i)(?<![a-z0-9])[a-z]:\\[^"''\r\n<>|*?,;]*')){    $raw=$m.Value.TrimEnd()

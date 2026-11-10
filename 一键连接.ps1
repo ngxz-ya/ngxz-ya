@@ -90,7 +90,7 @@ if($fast){
   $q|ForEach-Object{Write-Output $_}
   if(@($q|Where-Object{$_ -match 'RESULT: (OK|ALREADY_REGISTERED)'}).Count){
     Say ('CONNECTED_VIA_SAVED_EXPERIENCE 槽='+$Slot+' 用时 '+[Math]::Round(((Get-Date)-$t0).TotalSeconds,1)+'s')
-    Write-Output ('下一步（改模验收）：cd "'+$rt+'"；建模前 .\连接教练\查通用卡.ps1 -Stage 建模前；写任务 JSON；.\连接软件.ps1 -Software "'+$Software+'" -Action Connect -TaskFile <任务.json>')
+    Write-Output ('下一步（首连轻读回验收：建一个简单特征，独立读回核对尺寸和面数；复杂改模留到首连之后用 Run）：cd "'+$rt+'"；建模前 .\连接教练\查通用卡.ps1 -Stage 建模前；写任务 JSON；.\连接软件.ps1 -Software "'+$Software+'" -Action Connect -TaskFile <任务.json>')
     exit 0
   }
   Say ('STOP 4 快连未通过 exit='+$qc+'：不重试、不杀进程；按输出排查。如卡已不适用，按 NEED_AGENT_METHOD 流程修好后改原卡。');exit 4
@@ -121,7 +121,7 @@ Write-Output '     启动软件.ps1 自带弹窗守护：错误弹窗会被静�
 Write-Output '     软件若自动加载包外自定义/插件目录：用官方文档的环境变量/参数指向 artifacts 内空配置，不读取不加载那些目录。'
 Write-Output ('  e) 握手登记：.\YA插件\ya_link.ps1 soft='+$Software+' slot='+$Slot+' pid=<GUI PID> prepare=1 → 由软件内桥接写 readback → 去掉 prepare=1 再跑一次登记')
 Write-Output '  f) 建模前查卡（必做，留证）：.\连接教练\查通用卡.ps1 -Stage 建模前 [-Q 关键词]；读全文 -Get <编号>；照做后 -Apply <编号> -How "..."。连接软件.ps1 Connect/Run 也会自动补记一次 建模前 查卡。'
-Write-Output ('  g) 改模+独立读回验收：.\连接软件.ps1 -Software "'+$Software+'" -Action Connect -TaskFile <任务.json>（见 适配器\说明.md）')
+Write-Output ('  g) 首连轻读回验收（简单特征，独立读回尺寸+面数）：.\连接软件.ps1 -Software "'+$Software+'" -Action Connect -TaskFile <任务.json>（见 适配器\说明.md）')
 Write-Output ('  h) 通过后立即存经验：写 连接卡 + 连接教练\连接经验\'+$Slot+'\快通道.ps1，再 .\连接教练\连接经验\连接经验.ps1 add slot='+$Slot+' file=<卡.json>；下次 一键连接 会直接快连。')
 Write-Output '  调用规则（防卡死）：所有可执行程序（软件自带的命令行工具、主程序）都经 .\适配器\限时运行.ps1（-Exe <程序> 或 -File <脚本>）跑；直接 & xxx.exe / Start-Process / cmd /c 调用 = 越界审计违规。'
 Write-Output '     不要手写嵌套多行 powershell -Command "..."。多行逻辑写成 artifacts\*.ps1，用 .\适配器\限时运行.ps1 -File <脚本> -TimeoutSec 60 [-ArgLine:"参数"] 跑；'

@@ -5,7 +5,8 @@
 # 经 WMI 等系统进程转调时（父进程是 WmiPrvSE），Agent 的环境变量和父子链都断了：要显式传 log= / agent= / agent_pid=（快连.ps1 会自动传）。
 # 状态卡按包路径和 HUD Home 互斥去重，不终止其它进程。
 #   powershell -NoProfile -ExecutionPolicy Bypass -File ".\YA插件\ya_link.ps1" off=1      标成未连接
-# pid 必填，且该进程主窗口必须前台可见；后台进程、隐藏窗口、批处理/命令行无界面运行都会 RESULT: FAIL。
+# pid 必填，且该进程主窗口要在用户桌面上可见（被别的窗口盖住也算，不要求置前）；后台进程、隐藏/最小化窗口、批处理/命令行无界面运行都会 RESULT: FAIL。
+# 换新进程（软件重启）时直接对新 PID 跑 prepare=1：旧进程的登记和 %LOCALAPPDATA%\YALink\frontend\<旧PID>-* 会自动归档，面板跟到新进程。
 # TOKEN：log= 仅记录来源指针；真实统计需按说明显式运行采集真实用量.ps1，没有有效用量显示「未统计」。
 # 只写本包隔离的 %LOCALAPPDATA%\YAHud\instances\<包标识>\io\link.json（或环境变量 YALINK_HUD_HOME），不改安装目录、不碰软件。
 # 连接钩子（2026-11-05 维护者定规，所有软件同一套）：登记成功前自动确保这款软件的专属经验夹存在（连接教练\连接经验\经验分存.ps1 ensure）：
@@ -85,6 +86,19 @@ try {
   $work = [YaEvidence]::Work($pkg, $slotId)
   $packageId = [YaEvidence]::Identity($pkg)
   $pending = [ordered]@{state='opened'; soft=$soft; package_id=$packageId; slot=$slotId; pid=$softPid; process_start=$proc.StartTime.ToUniversalTime().Ticks.ToString()}
+  try { $pending['exe'] = [string]$proc.Path } catch { }
+  # 换新进程自动重绑（2026-11-10 R10）：%LOCALAPPDATA%\YALink\frontend 下进程已不在（PID+启动时间对不上）的旧登记归档到 _history，不删；面板随本次 PID。
+  try {
+    $frDir = Join-Path $env:LOCALAPPDATA 'YALink\frontend'
+    if (Test-Path -LiteralPath $frDir) {
+      foreach ($dd in @(Get-ChildItem -LiteralPath $frDir -Directory -ErrorAction SilentlyContinue)) {
+        if ($dd.Name -notmatch '^(\d+)-(\d+)$') { continue }
+        $dPid = [int]$Matches[1]; $dStart = $Matches[2]; $dLive = $false
+        try { $dp = Get-Process -Id $dPid -ErrorAction Stop; $dLive = ($dp.StartTime.ToUniversalTime().Ticks.ToString() -ceq $dStart) } catch { }
+        if (-not $dLive) { $dst = Join-Path $frDir ('_history\' + $dd.Name + '-' + (Get-Date -Format 'yyyyMMddHHmmss')); [IO.Directory]::CreateDirectory((Split-Path $dst -Parent)) | Out-Null; [IO.Directory]::Move($dd.FullName, $dst); Write-Output ('rebind: 旧进程登记已归档 ' + $dd.Name) }
+      }
+    }
+  } catch { Write-Output ('rebind: 旧登记归档跳过：' + $_.Exception.Message) }
   try {
     $prior = [YaEvidence]::Read($linkPath)
     if ($prior['package_id'] -ceq $packageId -and $prior['slot'] -ceq $slotId -and
@@ -124,7 +138,8 @@ try {
 
   $foregroundPid = [uint32]0
   [void][YaHudLink.Win]::GetWindowThreadProcessId([YaHudLink.Win]::GetForegroundWindow(), [ref]$foregroundPid)
-  if ($foregroundPid -ne $softPid) { throw '读回已匹配，但目标主窗口尚未置前；不登记成功。' }
+  # 2026-11-10 R10：只要求用户看得见（未最小化/未隐藏/在交互桌面），被别的窗口盖住也算；不要求置前，不抢前台、不模拟键鼠。
+  if ($foregroundPid -ne $softPid -and -not [YaWindow]::UserVisible($softPid, ([YaWindow]::Find($softPid)).ToInt64())) { throw '读回已匹配，但目标主窗口被最小化/隐藏/不在交互桌面；不登记成功。还原窗口即可，不必置前。' }
   # 连接钩子：自动确保专属经验夹（经验库\槽\<槽>\ + 连接教练\连接经验\<槽>\）。失败就不登记，不再悄悄落到 generic。
   $slotNote = ''
   $ensurePs = Join-Path $pkg '连接教练\连接经验\经验分存.ps1'

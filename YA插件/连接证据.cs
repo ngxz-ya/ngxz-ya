@@ -296,6 +296,16 @@ public static class YaWindow {
     ProcessInfo info;/* CREATE_BREAKAWAY_FROM_JOB|CREATE_NEW_PROCESS_GROUP so parent Agent job teardown cannot kill the GUI */if(!CreateProcess(exe,line,System.IntPtr.Zero,System.IntPtr.Zero,false,0x01000200,System.IntPtr.Zero,directory,ref startup,out info))throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(),"INTERACTIVE_DESKTOP_START_FAILED");
     CloseHandle(info.thread);CloseHandle(info.process);return info.pid;
   }
+  // 用户看得见（2026-11-10 R10 修）：交互桌面、窗口可见、未最小化、未被系统隐藏(cloak)、在屏幕内有面积即可。
+  // 不要求不被其它窗口遮挡、不要求置前：用户自己的聊天窗/浏览器盖在软件上面时软件依然算可见，也不为此抢前台或模拟键鼠。
+  public static bool UserVisible(int pid,long handle){
+    if(Desktop()!="WinSta0\\Default"||handle==0)return false;
+    var window=new System.IntPtr(handle);uint owner;GetWindowThreadProcessId(window,out owner);if(owner!=(uint)pid)return false;
+    int cloaked;Rect r;if(!IsWindowVisible(window)||IsIconic(window)||IsHungAppWindow(window)||DwmGetWindowAttribute(window,14,out cloaked,4)!=0||cloaked!=0||!GetWindowRect(window,out r))return false;
+    int left=System.Math.Max(r.Left,GetSystemMetrics(76)),top=System.Math.Max(r.Top,GetSystemMetrics(77)),right=System.Math.Min(r.Right,GetSystemMetrics(76)+GetSystemMetrics(78)),bottom=System.Math.Min(r.Bottom,GetSystemMetrics(77)+GetSystemMetrics(79));
+    return right-left>=24&&bottom-top>=24;
+  }
+  // 未被遮挡（更严）：只作提示记录，不作为验收条件。
   public static bool InputVisible(int pid,long handle){
     if(Desktop()!="WinSta0\\Default")return false;
     var desktop=OpenInputDesktop(0,false,0x41);if(desktop==System.IntPtr.Zero)return false;bool visible=false;

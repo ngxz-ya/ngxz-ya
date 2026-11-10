@@ -44,10 +44,11 @@ try{
       $softwareVisible=$false
       for($attempt=0;$attempt -lt 3;$attempt++){
         $window=[YaWindow]::Find($softwarePid)
-        if([YaWindow]::InputVisible($softwarePid,$window.ToInt64()) -or [YaWindow]::Front($softwarePid)){$softwareVisible=$true;break}
+        if([YaWindow]::UserVisible($softwarePid,$window.ToInt64())){$softwareVisible=$true;break}
+        if($attempt -eq 0){[void][YaWindow]::Front($softwarePid)}
         Start-Sleep -Milliseconds 300
       }
-      if(-not $softwareVisible){throw 'SOFTWARE_NOT_USER_VISIBLE: preserve the software session; do not restart it'}
+      if(-not $softwareVisible){throw 'SOFTWARE_NOT_USER_VISIBLE: window is minimized, hidden or not on the interactive desktop; restore it (being covered by other windows is fine); preserve the software session; do not restart it'}
     }
     $ready=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::AutoReset,($name+'-Show-Visible'))
     [void]$ready.Reset();Write-YaAtomic (Join-Path $io 'hud_show_request.json') $pending
@@ -62,9 +63,9 @@ try{
     if(-not $shown){throw ('HUD_NOT_VISIBLE: no fresh user-desktop window confirmation; launcher pid='+$showPid+'; logs='+$showDirectory+'; close an obsolete panel manually if it owns this package')}
     $proof=Get-Content -LiteralPath (Join-Path $io 'hud_window.json') -Raw -Encoding UTF8|ConvertFrom-Json
     $process=Get-Process -Id $proof.pid -ErrorAction Stop
-    if($proof.request -cne $pending.request -or $proof.package_id -cne $pending.package_id -or $proof.desktop -cne 'WinSta0\Default' -or $process.StartTime.ToUniversalTime().Ticks.ToString() -cne $proof.process_start -or -not [YaWindow]::InputVisible([int]$proof.pid,[long]$proof.handle)){throw 'HUD_NOT_VISIBLE: actual process/window does not match this request'}
+    if($proof.request -cne $pending.request -or $proof.package_id -cne $pending.package_id -or $proof.desktop -cne 'WinSta0\Default' -or $process.StartTime.ToUniversalTime().Ticks.ToString() -cne $proof.process_start -or -not [YaWindow]::UserVisible([int]$proof.pid,[long]$proof.handle)){throw 'HUD_NOT_VISIBLE: actual process/window does not match this request'}
     $result=@{status='VISIBLE';request=$pending.request;host_pid=$PID;pid=$proof.pid;process_start=$proof.process_start;handle=$proof.handle;desktop=$proof.desktop;verified_utc=$proof.verified_utc}
-    if($software){$window=[YaWindow]::Find([int]$software['pid']);if(-not [YaWindow]::InputVisible([int]$software['pid'],$window.ToInt64())){throw 'SOFTWARE_NOT_USER_VISIBLE: YA is visible but the registered software is not'};$result['software_pid']=$software['pid'];$result['software_handle']=$window.ToInt64();$result['software_visible']=$true}
+    if($software){$window=[YaWindow]::Find([int]$software['pid']);if(-not [YaWindow]::UserVisible([int]$software['pid'],$window.ToInt64())){throw 'SOFTWARE_NOT_USER_VISIBLE: YA is visible but the registered software window is minimized/hidden'};$result['software_pid']=$software['pid'];$result['software_handle']=$window.ToInt64();$result['software_visible']=$true;$result['software_unobscured']=[YaWindow]::InputVisible([int]$software['pid'],$window.ToInt64())}
   }finally{if($ready){$ready.Dispose()};if($held){$guard.ReleaseMutex()};$guard.Dispose()}
   Write-YaAtomic (Join-Path (Split-Path $RequestFile -Parent) 'result.json') $result
   exit 0

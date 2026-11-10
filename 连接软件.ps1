@@ -1,5 +1,5 @@
 ﻿# 第一步先读 AGENTS.md「第 0 步」。首连一条命令（包根）：.\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"
-param([Parameter(Mandatory=$true)][string]$Software,[ValidateSet('Check','Run','Diagnose','Connect','Reconcile')][string]$Action='Check',[string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120,[switch]$AllowBatch,[switch]$ShowPanel)
+param([Parameter(Mandatory=$true)][string]$Software,[ValidateSet('Check','Run','Diagnose','Connect','Reconcile','Abandon')][string]$Action='Check',[string]$Reason,[string]$TaskFile,[string]$RequestId=([guid]::NewGuid().ToString('N')),[ValidateRange(1,1800)][int]$TimeoutSeconds=120,[switch]$AllowBatch,[switch]$ShowPanel)
 $ErrorActionPreference='Stop'
 $pkg=$PSScriptRoot
 try{
@@ -89,6 +89,45 @@ try{
    exit 0
   }finally{if($held){$guard.ReleaseMutex()};$guard.Dispose()}
  }
+ if($Action -eq 'Abandon'){
+  # 正式作废一个结果未知/失败的请求（2026-11-10 R10）：先 Reconcile 只读核对，确认软件里只有本请求的测试特征或没改动，再用本动作。
+  # 不删任何证据：请求目录写 abandoned.json；活动指针 operation.json / operation_request.json 和该软件进程的 frontend 请求登记归档到 运行状态\迁移历史\<编号>\；之后可用新请求重来。Agent 不要自己挪这些文件。
+  if(-not $Reason){throw 'INPUT: Abandon 要写 -Reason（Reconcile 看到了什么、为什么作废）'}
+  $guard=[Threading.Mutex]::new($false,('Local\YASoftwareOperation-'+[YaEvidence]::Identity($pkg)))
+  $held=$false
+  try{
+   try{$held=$guard.WaitOne(0)}catch [Threading.AbandonedMutexException]{$held=$true}
+   if(-not $held){throw 'BUSY: original task is still running'}
+   $homeDir=Get-YaPackageHudHome $pkg
+   $refFile=Join-Path $homeDir 'operation_request.json'
+   if(-not (Test-Path -LiteralPath $refFile) -and -not (Test-Path -LiteralPath $operation)){@{status='NOTHING_TO_ABANDON'}|ConvertTo-Json;exit 0}
+   $op=if(Test-Path -LiteralPath $operation){Get-Content -LiteralPath $operation -Raw -Encoding UTF8|ConvertFrom-Json}else{$null}
+   if($op.status -eq 'pending' -and $op.owner_pid){$owner=Get-Process -Id $op.owner_pid -ErrorAction SilentlyContinue;if($owner -and $owner.StartTime.ToUniversalTime().Ticks.ToString() -ceq [string]$op.owner_start){throw 'BUSY: original task owner is still running'}}
+   $ref=$null;$state=$null;$job=$null
+   if(Test-Path -LiteralPath $refFile){
+    $ref=Get-Content -LiteralPath $refFile -Raw -Encoding UTF8|ConvertFrom-Json
+    if($ref.request -cnotmatch '^[a-f0-9]{32}$'){throw 'RECOVERY_REQUEST_MISMATCH'}
+    $job=Split-Path $ref.state_file -Parent
+    if((Split-Path $job -Leaf) -cne $ref.request){throw 'RECOVERY_REQUEST_MISMATCH'}
+    if(Test-Path -LiteralPath $ref.state_file){$state=Get-Content -LiteralPath $ref.state_file -Raw -Encoding UTF8|ConvertFrom-Json}
+    if($state.status -ceq 'completed'){$done=$true;try{Assert-YaCompletedRequest $ref.state_file}catch{$done=$false};if($done){throw 'ABANDON_REFUSED: request is completed and verified; nothing to abandon'}}
+   }
+   $history=Join-Path $homeDir ('迁移历史\'+[guid]::NewGuid().ToString('N'))
+   [IO.Directory]::CreateDirectory($history)|Out-Null
+   $moved=@()
+   foreach($name in @('operation.json','operation_request.json')){$p=Join-Path $homeDir $name;if([IO.File]::Exists($p)){[IO.File]::Move($p,(Join-Path $history $name));$moved+=$name}}
+   try{
+    $link=[YaEvidence]::Read((Join-Path (Join-Path $homeDir 'io') 'link.json'))
+    $sessionRef=Join-Path $env:LOCALAPPDATA ('YALink\frontend\'+$link['pid']+'-'+$link['process_start']+'\request.json')
+    if($ref -and [IO.File]::Exists($sessionRef)){$sr=Get-Content -LiteralPath $sessionRef -Raw -Encoding UTF8|ConvertFrom-Json;if($sr.request -ceq $ref.request){[IO.File]::Move($sessionRef,(Join-Path $history 'frontend-request.json'));$moved+='frontend-request.json'}}
+   }catch{}
+   $record=@{request=$(if($ref){$ref.request}else{$op.request});reason=$Reason;time=[DateTime]::UtcNow.ToString('o');operation=$op;archived=$moved;history=$history}
+   Write-YaAtomic (Join-Path $history 'abandoned.json') $record
+   if($job -and (Test-Path -LiteralPath $job)){Write-YaAtomic (Join-Path $job 'abandoned.json') $record}
+   @{status='ABANDONED';request=$record.request;archived=$moved;history=$history;next='软件文档保持现状；用新的 RequestId（默认自动生成）重新 Connect/Run，不重放旧请求'}|ConvertTo-Json -Depth 8
+   exit 0
+  }finally{if($held){$guard.ReleaseMutex()};$guard.Dispose()}
+ }
  if($Action -eq 'Diagnose'){
   $state=if(Test-Path -LiteralPath $operation){Get-Content -LiteralPath $operation -Raw -Encoding UTF8|ConvertFrom-Json}else{$null}
   $quick=$null;$ref=Join-Path (Get-YaPackageHudHome $pkg) 'quick_request.json'
@@ -128,9 +167,9 @@ try{
    $hudProcess=Get-Process -Id ([int]$hud['pid']) -ErrorAction Stop
    $hudVisible=($hud['package_id'] -ceq [YaEvidence]::Identity($pkg) -and
      $hudProcess.StartTime.ToUniversalTime().Ticks.ToString() -ceq $hud['process_start'] -and
-     [YaWindow]::InputVisible($hudProcess.Id,[long]$hud['handle']))
+     [YaWindow]::UserVisible($hudProcess.Id,[long]$hud['handle']))
   }catch{}
-  @{status='DIAGNOSTIC';software=$Software;operation=$state;quick_connection=$quick;file=$operation;frontend=$frontend;hud_visible=$hudVisible;hud_entry='YA插件/show_ya.ps1';next='保留日志和成果，检查是否迟到执行；不要清状态重发'}|ConvertTo-Json -Depth 15;exit 0
+  @{status='DIAGNOSTIC';software=$Software;operation=$state;quick_connection=$quick;file=$operation;frontend=$frontend;hud_visible=$hudVisible;hud_entry='YA插件/show_ya.ps1';next='保留日志和成果，检查是否迟到执行；不要清状态重发。Reconcile 核对后确认作废时用 -Action Abandon -Reason 正式作废'}|ConvertTo-Json -Depth 15;exit 0
  }
  Assert-YaOperation $pkg
  $output=@(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '连接教练\连接经验\经验分存.ps1') ensure ('soft='+$Software))
@@ -184,7 +223,7 @@ try{
   try{
    $process=Get-Process -Id ([int]$link['pid']) -ErrorAction Stop
    $softwareVisible=($process.StartTime.ToUniversalTime().Ticks.ToString() -ceq $link['process_start'] -and
-     [YaWindow]::InputVisible($process.Id,[YaWindow]::Find($process.Id).ToInt64()))
+     [YaWindow]::UserVisible($process.Id,[YaWindow]::Find($process.Id).ToInt64()))
   }catch{$softwareVisible=$false}
  }
  if($ShowPanel){
