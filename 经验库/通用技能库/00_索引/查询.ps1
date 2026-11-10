@@ -6,9 +6,8 @@ try {
   $argsMap=@{};foreach($arg in $Rest){if($arg -notmatch '^([^=]+)=(.*)$'){throw '参数须为 key=value'};$argsMap[$matches[1]]=$matches[2]}
   $index=Get-Content -LiteralPath (Join-Path $lib '索引.json') -Raw -Encoding UTF8|ConvertFrom-Json
   $referencePath='软件参考/freecad/长方体.json'
-  $reference=Get-Content -LiteralPath (Join-Path $lib $referencePath) -Raw -Encoding UTF8|ConvertFrom-Json
-  $entry=[pscustomobject]@{id=$reference.id;t=$reference.t;c=$reference.c;k=$reference.k;f=$referencePath;source='public_reference'}
-  $entries=@($index.entries|Where-Object id -ne $entry.id)+@($entry)
+  $entries=@($index.entries);$entry=[pscustomobject]@{id=''}
+  if([IO.File]::Exists((Join-Path $lib $referencePath))){$reference=Get-Content -LiteralPath (Join-Path $lib $referencePath) -Raw -Encoding UTF8|ConvertFrom-Json;$entry=[pscustomobject]@{id=$reference.id;t=$reference.t;c=$reference.c;k=$reference.k;f=$referencePath;source='public_reference'};$entries=@($index.entries|Where-Object id -ne $entry.id)+@($entry)}
   if($Command -eq 'skill_get'){
     $rows=@($entries|Where-Object id -ceq $argsMap['id'])
     if($rows.Count -ne 1){throw '未找到唯一通法编号'}

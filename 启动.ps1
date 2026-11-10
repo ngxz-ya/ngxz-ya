@@ -3,7 +3,7 @@
 param([Parameter(Mandatory=$true)][string]$Software,[string]$Workspace,[switch]$NoPanel,[switch]$Fresh,[switch]$OpenCad,[string]$StartDir)
 $ErrorActionPreference='Stop'
 Write-Output 'STEP0: 只碰本包、起点目录、本机定位.json 的 install_dirs；每个大步骤前跑 连接教练\越界路径审计.ps1（退出码 2=本轮失败，立即停）。'
-Write-Output 'CHAIN: 一键连接.ps1 = 0落位 → 1定位软件(连接教练\定位软件.ps1) → 2部署工作区(本脚本) → 3查通用卡(连接教练\查通用卡.ps1) → 4快连 | NEED_AGENT_METHOD → 适配器\编译桥接.ps1 → 适配器\启动软件.ps1 → YA插件\ya_link.ps1 → 查通用卡 -Stage 建模前 → 连接软件.ps1 -Action Connect -TaskFile → 连接经验.ps1 add'
+Write-Output 'CHAIN: 一键连接.ps1 = 0落位 → 1定位软件(连接教练\定位软件.ps1) → 2部署工作区(本脚本) → 3查通用卡(连接教练\查通用卡.ps1) → 4快连 | NEED_AGENT_METHOD → 上网找开源方案 → 适配器\接口探测.ps1 → 适配器\编译桥接.ps1 → 适配器\启动软件.ps1(含弹窗守护) → YA插件\ya_link.ps1 → 查通用卡 -Stage 建模前 → 连接软件.ps1 -Action Connect -TaskFile → 连接经验.ps1 add'
 $selfRoot=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
 if(-not $Workspace -and (Split-Path $selfRoot -Leaf) -ne '工作区' -and [IO.File]::Exists((Join-Path $selfRoot '连接教练\落位.ps1'))){
   $lw=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $selfRoot '连接教练\落位.ps1') -Package $selfRoot @(if($StartDir){@('-StartDir',$StartDir)})
@@ -17,17 +17,17 @@ if(-not $Workspace -and (Split-Path $selfRoot -Leaf) -ne '工作区' -and [IO.Fi
   }
 }
 if($PSVersionTable.PSEdition -ne 'Desktop'){throw '请使用 Windows PowerShell 5.1'}
-if($OpenCad -and ($Software -ine 'FreeCAD' -or $NoPanel)){throw 'OPEN_CAD_REQUIRES_FREECAD_AND_DESKTOP'}
+if($OpenCad){throw 'OPEN_CAD_REMOVED: 本包不再内置任何软件的连接实现。请运行 一键连接.ps1，并按 NEED_AGENT_METHOD 先上网找合法开源连接方案。'}
 if(-not $Workspace){
   # Package unzipped directly on Desktop = daily use (Desktop\ngxz-ya). Otherwise (start folder / Temp) = short sibling workspace in the same start folder.
   $desk=[IO.Path]::GetFullPath([Environment]::GetFolderPath('DesktopDirectory')).TrimEnd('\')
   $src=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
   $startDir=Split-Path $src -Parent
-  if($startDir -ieq $desk){$Workspace=Join-Path $desk 'ngxz-ya'}else{$Workspace=Join-Path $startDir 'ngxz-ya-ws'}
+  if($StartDir -and [IO.Path]::GetFullPath($StartDir).TrimEnd('\') -ieq $src){$Workspace=Join-Path $src 'ngxz-ya-ws'}elseif($startDir -ieq $desk){$Workspace=Join-Path $desk 'ngxz-ya'}else{$Workspace=Join-Path $startDir 'ngxz-ya-ws'}
 }
 $Workspace=[IO.Path]::GetFullPath($Workspace).TrimEnd('\')
 $source=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
-if($Workspace -eq $source -or $Workspace.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase)){throw '部署位置不能是源码或源码子目录'}
+if($Workspace -eq $source -or ($Workspace.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase) -and $Workspace -ine (Join-Path $source 'ngxz-ya-ws'))){throw '部署位置不能是源码或源码子目录（唯一例外：包被直接克隆/解压到起点目录时用 <包根>\ngxz-ya-ws）'}
 if($Fresh -and (Test-Path -LiteralPath $Workspace)){throw 'FRESH_WORKSPACE_REQUIRED: 干净测试必须使用不存在的新工作区；不清空、不覆盖已有目录。'}
 $runtime=Join-Path $Workspace '工作区'
 $identity=[Security.Cryptography.SHA256]::Create()
@@ -143,8 +143,7 @@ try{
  if($LASTEXITCODE){throw '安装失败，保留工作区'}
  Write-Output ('workspace: '+$runtime)
  if($OpenCad){
-  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '适配器\FreeCAD\启动.ps1')
-  exit $LASTEXITCODE
+  throw 'OPEN_CAD_REMOVED'
  }
  $checkArgs=@('-Software',$Software,'-Action','Check')
  if(-not $NoPanel){$checkArgs+='-ShowPanel'}
