@@ -7,7 +7,7 @@
 # pid 必填，且该进程主窗口必须前台可见；后台进程、隐藏窗口、批处理/命令行无界面运行都会 RESULT: FAIL。
 # TOKEN：log= 仅记录来源指针；真实统计需按说明显式运行采集真实用量.ps1，没有有效用量显示「未统计」。
 # 只写本包隔离的 %LOCALAPPDATA%\YAHud\instances\<包标识>\io\link.json（或环境变量 YALINK_HUD_HOME），不改安装目录、不碰软件。
-# 连接钩子（2026-11-05 掌门定规，所有软件同一套）：登记成功前自动确保这款软件的专属经验夹存在（连接教练\连接经验\经验分存.ps1 ensure）：
+# 连接钩子（2026-11-05 维护者定规，所有软件同一套）：登记成功前自动确保这款软件的专属经验夹存在（连接教练\连接经验\经验分存.ps1 ensure）：
 #   经验库\槽\<槽>\（招式库/坑库/零件方案库/_草稿/索引.json）+ 连接教练\连接经验\<槽>\。证据协议必填 slot=；不再落到 generic。正式包、测试包都自动建，人不手建。
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest)
 $ErrorActionPreference = 'Stop'

@@ -6,12 +6,13 @@
 
 收到「仓库地址＋连接某软件」后，**只能**按下面顺序做。本节优先于本文件其他所有内容，也优先于 Agent 自己的习惯做法。
 
-1. **下载到当前目录，不看别处。** 当前工作目录（通常是用户在桌面新建的空文件夹）就是本轮起点。不查看本机任何其他位置，直接在当前目录执行：
+1. **下载到当前目录，不看别处。** 当前工作目录（通常是用户在桌面新建的空文件夹）就是本轮起点。GitHub 页面读不到也不要紧，直接下载 ZIP，**解压到当前目录**；绝不下载或解压到 `%TEMP%` 或其他任何位置：
    ```powershell
-   Invoke-WebRequest https://github.com/ngxz-ya/ngxz-ya/archive/refs/heads/main.zip -OutFile ngxz.zip -UseBasicParsing
+   Invoke-WebRequest https://codeload.github.com/ngxz-ya/ngxz-ya/zip/refs/heads/main -OutFile ngxz.zip -UseBasicParsing
    Expand-Archive ngxz.zip . ; Set-Location ngxz-ya-main
    ```
-   之后只在 `ngxz-ya-main` 和起点目录内工作。下载失败就报告原因并停止，不得去本机找旧包。
+   （备用地址 `https://github.com/ngxz-ya/ngxz-ya/archive/refs/heads/main.zip`。）解压后**先读 `ngxz-ya-main\AGENTS.md`，再做任何其他事**。之后只在 `ngxz-ya-main` 和起点目录内工作。下载失败就报告原因并停止，不得去本机找旧包。
+   下载前如需确认目标软件是否安装，只允许定向查：卸载注册项、App Paths、环境变量值、该软件厂商目录（如 `Program Files\<厂商>`）；**不得列举任何盘符根或 `Program Files` 根**。
 2. **定位目标软件（本轮唯一允许的本机探测）。** 在包根运行：
    `powershell -NoProfile -ExecutionPolicy Bypass -File 连接教练\定位软件.ps1 -Software "<软件名>"`
    脚本只查注册表卸载项、App Paths、环境变量值和 Program Files 下两级厂商目录，结果写入包根 `本机定位.json`。之后所有步骤**只用** `install_dirs` 里的路径。退出码 3（找不到）就报告并停止，不得自己扩大搜索。
@@ -63,7 +64,7 @@
 
 1. 复用同一工作区、软件进程和允许操作的文档。先确认目标和实际状态。通过 `YA插件\本包命令.ps1` 用 `exp_search slot=实际槽 q=关键词`，并带上已核对的 `version=` 和 `interface=`，再用 `exp_get slot=实际槽 id=编号` 读全文。`skill_search` / `skill_get` 查公开参考和候选知识。检索应在写计划前，`offset=` 可继续展开。`generic` 是未指定软件的旧记录，不自动作为跨软件通用知识。`exp_recall` 用于将检索关联到任务。
 2. 核对软件版本、接口、条件和原证据。按适配器支持的动作写新任务文件，预先列出关键参数和验收值。可用 `keywords` 存稳定短词，`used_experiences` 声明本次实际采用的经验、适用条件和步骤。没有适用经验时，在 `experience_reason` 记录原因。用 `连接软件.ps1 -Software "软件名" -Action Run -TaskFile 本次任务.json`，由软件执行和独立读取核验结果。只有用户明确选后台才用 `Run -AllowBatch`。
-按工程图建模或改模时，先按 [经验库说明](经验库/说明.md) 中通法 `GEN-DWG-001`（图纸标号→建模→实测标号→逐号对照→修正复核）执行。
+按工程图建模或改模时，先 `skill_search q=尺寸编号` 取通用卡 `G-MODEL-004`（已合并 GEN-DWG-001：图纸标号→建模→实测标号→逐号对照→修正复核）照做。开工前用 `skill_search` 查通用卡，用到哪张就在任务 `used_experiences` 里写明编号和采用的步骤。
 3. 报告本次成果和验证状态。工具按软件分槽保存通过的方法，未知失败先作草稿。检索和读取不等于成功复用。经验含目标、参数、步骤、版本、证据和适用边界。`exp_save verified=1` 是调用方声明。软件结果需独立核验。详见 [经验库说明](经验库/说明.md)。
 
 ## 接手与排错

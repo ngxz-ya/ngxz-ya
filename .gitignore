@@ -106,6 +106,7 @@
 !/连接教练/通用接入指南.md
 !/连接教练/越界路径审计.ps1
 !/连接教练/定位软件.ps1
+!/经验库/通用技能库/*/*.json
 !/适配器/FreeCAD/启动.ps1
 !/适配器/FreeCAD/read.ps1
 !/适配器/FreeCAD/bridge.py

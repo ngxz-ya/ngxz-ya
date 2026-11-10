@@ -74,7 +74,7 @@ foreach($slotId in @('generic','freecad')){
 New-FactoryJson '连接教练/连接经验/索引.json' @{说明='本地连接卡出厂为空。';count=0;entries=@()}
 # ReleaseCandidate contains only the root index and approved cards. Deployment and internal test profiles create the empty local categories.
 $emptyCategories=@(if($Profile -ne 'ReleaseCandidate'){$policy.empty_knowledge_categories})
-New-FactoryJson '经验库/通用技能库/索引.json' @{说明='本机候选卡索引，出厂为空。随包软件参考由 skill_search 单独读取。';total=0;entries=@()}
+# 通用候选卡（v=0）与其索引随包发布，来自允许清单，不再改写为空。
 foreach($category in $emptyCategories){
   if($category -notmatch '^\d\d_[^\\/.:]+$' -or $category -eq '00_索引'){throw '空分类目录非法'}
   New-FactoryJson ('经验库/通用技能库/'+$category+'/索引.json') @{说明='用户本地候选方法；出厂为空';count=0;entries=@()}

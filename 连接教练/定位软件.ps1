@@ -3,6 +3,7 @@
 # 结果写入本包根 本机定位.json；之后所有步骤只允许使用其中 install_dirs。
 param([Parameter(Mandatory=$true)][string]$Software)
 $ErrorActionPreference='Stop'
+try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
 $name=$Software.Trim()
 if(-not $name -or $name.Length -gt 64){throw 'SOFTWARE_NAME_REQUIRED'}
@@ -80,11 +81,11 @@ $result=[ordered]@{
   package=$pkg;start_dir=(Split-Path $pkg -Parent)
   install_dirs=[object[]]$install.ToArray();registered=[object[]]$registered.ToArray();candidates=[object[]]$hits.ToArray();running=[object[]]$running
   methods=@('uninstall_registry','app_paths','environment_values','program_files_two_levels')
-  rule='之后只允许访问：本包、起点目录、install_dirs、本包管理的 YALink/YAHud 状态。其余本机路径一律禁止；每个大步骤前运行 连接教练\越界路径审计.ps1。'
+  rule='From now on only access: this package, its start folder, install_dirs, and this package''s YALink/YAHud state. Everything else is forbidden. Run the overreach audit before every major step.'
 }
 $out=Join-Path $pkg '本机定位.json'
 [IO.File]::WriteAllText($out,(ConvertTo-Json -InputObject $result -Depth 6),[Text.UTF8Encoding]::new($true))
 ConvertTo-Json -InputObject $result -Depth 6
-if($status -ne 'FOUND'){Write-Output 'NOT_FOUND: 未按允许方式找到该软件。停止并向用户报告，不得自行扩大搜索。';exit 3}
+if($status -ne 'FOUND'){Write-Output 'NOT_FOUND: target software not found by the allowed methods. Stop and report; do not widen the search.';exit 3}
 Write-Output ('LOCATED: '+($install -join ' | ')+' -> '+$out)
 exit 0

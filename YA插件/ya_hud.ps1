@@ -436,7 +436,7 @@ public class YaCard : Window {
 
   void MakeTray() {
 
-    // 2026-11-05 掌门定：托盘/窗口小图标用白底黑字 YA（不用蓝底）
+    // 2026-11-05 维护者定：托盘/窗口小图标用白底黑字 YA（不用蓝底）
     var bmp = new SD.Bitmap(32, 32); IntPtr hIcon = IntPtr.Zero; using (var g = SD.Graphics.FromImage(bmp)) {
 
       g.SmoothingMode = SD.Drawing2D.SmoothingMode.AntiAlias; g.TextRenderingHint = SD.Text.TextRenderingHint.AntiAliasGridFit; g.Clear(SD.Color.Transparent);
