@@ -1,9 +1,10 @@
 ﻿# 第一步先读 AGENTS.md「第 0 步」。通用「弹窗守护 / 静默自愈」（软件无关）：盯住目标软件进程（含子进程）的模态对话框，记录文字、关闭（发 WM_CLOSE，不按键不点鼠标），
 # 文字像「找不到方法 / MissingMethod / 初始化错误 / TypeLoad / could not load」时，调用 Agent 写好的重建/重启脚本做有限次数自愈；超过上限如实报告 HEAL_FAILED。
 # 用法：powershell -NoProfile -ExecutionPolicy Bypass -File 适配器\弹窗守护.ps1 -TargetPid <PID> [-Seconds 120] [-Dismiss] [-RetryScript <重建并重启.ps1>] [-MaxRetries 2]
+#   许可类弹窗（标题或正文含 许可/License/授权/EULA/激活/Activation）一律只记录、不关闭、不自愈，即使给了 -Dismiss；记 license_dialog=true，算失败点上报，交用户处理。
 #   -Seconds 0 = 只查一次。记录：工作区根\artifacts\dialogs.jsonl。每个弹窗都算一个失败点，必须写进报告。
 # 退出码：0 无弹窗或已自愈(HEALED)；7 有弹窗（已记录/关闭），未自愈；8 自愈到上限仍失败。
-param([Parameter(Mandatory=$true)][int]$TargetPid,[int]$Seconds=0,[switch]$Dismiss,[string]$RetryScript,[ValidateRange(0,5)][int]$MaxRetries=2,[string]$HealPattern='(?i)MissingMethod|找不到方法|初始化错误|TypeLoad|could not load|未能加载|EntryPoint|BadImageFormat',[string]$Log)
+param([Parameter(Mandatory=$true)][int]$TargetPid,[int]$Seconds=0,[switch]$Dismiss,[string]$RetryScript,[ValidateRange(0,5)][int]$MaxRetries=2,[string]$HealPattern='(?i)MissingMethod|找不到方法|初始化错误|TypeLoad|could not load|未能加载|EntryPoint|BadImageFormat',[string]$Log,[string]$LicensePattern='(?i)许可|License|授权|EULA|激活|Activation')
 $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
@@ -42,10 +43,11 @@ do{
   if($alive){
     foreach($d in [YaDialogScan]::Scan((Tree $TargetPid))){
       $key=$d[0]+'|'+$d[2]+'|'+$d[3];if($seen.ContainsKey($key)){continue};$seen[$key]=1;$found++
-      $rec=[ordered]@{utc=[DateTime]::UtcNow.ToString('o');target_pid=$TargetPid;pid=[int]$d[1];hwnd=[int64]$d[0];title=$d[2];text=$d[3];dismissed=$false;heal=''}
-      if($Dismiss){[void][YaDialogScan]::PostMessage([IntPtr][int64]$d[0],0x0010,[IntPtr]::Zero,[IntPtr]::Zero);$rec.dismissed=$true}
-      Write-Output ('MODAL_DIALOG pid='+$d[1]+' title="'+$d[2]+'" text="'+$d[3]+'"'+$(if($Dismiss){' -> 已关闭(WM_CLOSE)'}else{''}))
-      if($RetryScript -and (($d[2]+' '+$d[3]) -match $HealPattern)){
+      $rec=[ordered]@{utc=[DateTime]::UtcNow.ToString('o');target_pid=$TargetPid;pid=[int]$d[1];hwnd=[int64]$d[0];title=$d[2];text=$d[3];dismissed=$false;heal='';license_dialog=$false}
+      $lic=(($d[2]+' '+$d[3]) -match $LicensePattern);$rec.license_dialog=$lic
+      if($Dismiss -and -not $lic){[void][YaDialogScan]::PostMessage([IntPtr][int64]$d[0],0x0010,[IntPtr]::Zero,[IntPtr]::Zero);$rec.dismissed=$true}
+      Write-Output ('MODAL_DIALOG pid='+$d[1]+' title="'+$d[2]+'" text="'+$d[3]+'"'+$(if($lic){' -> 许可类弹窗：只记录不关闭，算失败点，交用户处理'}elseif($Dismiss){' -> 已关闭(WM_CLOSE)'}else{''}))
+      if($RetryScript -and -not $lic -and (($d[2]+' '+$d[3]) -match $HealPattern)){
         if($retries -lt $MaxRetries){$retries++;Write-Output ('SELF_HEAL attempt '+$retries+'/'+$MaxRetries+': '+$RetryScript)
           & powershell -NoProfile -ExecutionPolicy Bypass -File $RetryScript -DialogText ($d[2]+' '+$d[3])
           $rc=$LASTEXITCODE;$rec.heal=('attempt '+$retries+' exit='+$rc);if($rc -eq 0){$healed=$true}else{$healed=$false}

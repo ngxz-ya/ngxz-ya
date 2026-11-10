@@ -33,10 +33,11 @@ while($queue.Count){
     $category='D';$reason='未列入明确允许清单，来源或用途待确认';$origin='UNKNOWN';$rights='UNKNOWN'
     if($allow.ContainsKey($rel)){
       $category=$allow[$rel];$reason='维护者有权发布的项目源码、说明或许可证';$origin='PROJECT_MAINTAINED_SOURCE';$rights='MIT_MAINTAINER_OWNED_CODE_ONLY'
+      if($rel -like '经验库/通用技能库/*'){$reason='维护者原创通用卡，按 MIT 发布';$rights='MIT_MAINTAINER_ORIGINAL'}
       if($category -eq 'B'){$reason='研发测试，仅TestCopy包含'}
     }elseif($policy.development_tests -contains $rel -or $rel -eq '.gitignore' -or $rel -eq '包信息.json'){$category='B';$reason='研发工具、测试或上轮生成标记，不进入审查候选'}
     elseif($rel -match '^经验库/(槽/|[^/]+\.json$)' -or $rel -match '^连接教练/连接经验/(索引\.json$|[^/]+/)'){$category='C';$reason='本地槽、任务、经验或连接数据；生成空结构，不复制原件'}
-    elseif($rel -like '经验库/通用技能库/*'){$reason='候选知识卡及派生索引/说明，再分发授权未确认，全部隔离'}
+    elseif($rel -like '经验库/通用技能库/*'){$reason='维护者原创通用卡（MIT）但未列入发布允许清单，本次不打包；需要时补进清单';$origin='PROJECT_MAINTAINED_SOURCE';$rights='MIT_MAINTAINER_ORIGINAL'}
     elseif($rel -match '(?i)\.(log|jsonl|prt|step|stp|stl|db|sqlite|tmp|bak)$|(^|/)(\.env|credentials)'){$category='C';$reason='运行证据、模型、日志或可能的私人配置'}
     $include=$allow.ContainsKey($rel)
     $hash=(Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
