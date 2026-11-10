@@ -1,4 +1,5 @@
-﻿# 本机定位（第 0 步唯一允许的本机探测）：只按注册表卸载项 / App Paths / 环境变量 / Program Files 两级厂商目录
+﻿# 第一步先读 AGENTS.md「第 0 步」。首连一条命令（包根）：.\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"
+# 本机定位（第 0 步唯一允许的本机探测）：只按注册表卸载项 / App Paths / 环境变量 / Program Files 两级厂商目录
 # 定位用户点名的软件。不读用户主目录、桌面、文档、下载、其他盘符根，不递归扫描任何目录。
 # 结果写入本包根 本机定位.json；之后所有步骤只允许使用其中 install_dirs。
 param([Parameter(Mandatory=$true)][string]$Software)

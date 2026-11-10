@@ -1,6 +1,21 @@
-﻿param([Parameter(Mandatory=$true)][string]$Software,[string]$Workspace,[switch]$NoPanel,[switch]$Fresh,[switch]$OpenCad)
+﻿# 第一步先读 AGENTS.md「第 0 步」。首连推荐直接用一条命令：.\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"（它会调用本脚本）。
+# 本脚本只部署工作区；包在 %TEMP% 时先把本包复制到起点目录（连接教练\落位.ps1）再继续。
+param([Parameter(Mandatory=$true)][string]$Software,[string]$Workspace,[switch]$NoPanel,[switch]$Fresh,[switch]$OpenCad,[string]$StartDir)
 $ErrorActionPreference='Stop'
-Write-Output 'note: STEP0 — only this package, its start folder and 本机定位.json install_dirs; run 连接教练\越界路径审计.ps1 before each major step (exit 2 = stop)'
+Write-Output 'STEP0: 只碰本包、起点目录、本机定位.json 的 install_dirs；每个大步骤前跑 连接教练\越界路径审计.ps1（退出码 2=本轮失败，立即停）。'
+Write-Output 'CHAIN: 一键连接.ps1 = 0落位 → 1定位软件(连接教练\定位软件.ps1) → 2部署工作区(本脚本) → 3查通用卡(连接教练\查通用卡.ps1) → 4快连 | NEED_AGENT_METHOD → 适配器\编译桥接.ps1 → 适配器\启动软件.ps1 → YA插件\ya_link.ps1 → 查通用卡 -Stage 建模前 → 连接软件.ps1 -Action Connect -TaskFile → 连接经验.ps1 add'
+$selfRoot=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
+if(-not $Workspace -and (Split-Path $selfRoot -Leaf) -ne '工作区' -and [IO.File]::Exists((Join-Path $selfRoot '连接教练\落位.ps1'))){
+  $lw=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $selfRoot '连接教练\落位.ps1') -Package $selfRoot @(if($StartDir){@('-StartDir',$StartDir)})
+  $lc=$LASTEXITCODE;$lw|Where-Object{$_ -notmatch '^\{'}|ForEach-Object{Write-Output $_}
+  if($lc){exit $lc}
+  $lr=($lw|Where-Object{$_ -match '^\{'}|Select-Object -Last 1)|ConvertFrom-Json
+  if($lr.moved){
+    $fa=@('-Software',$Software);if($NoPanel){$fa+='-NoPanel'};if($Fresh){$fa+='-Fresh'};if($OpenCad){$fa+='-OpenCad'}
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $lr.package '启动.ps1') @fa
+    exit $LASTEXITCODE
+  }
+}
 if($PSVersionTable.PSEdition -ne 'Desktop'){throw '请使用 Windows PowerShell 5.1'}
 if($OpenCad -and ($Software -ine 'FreeCAD' -or $NoPanel)){throw 'OPEN_CAD_REQUIRES_FREECAD_AND_DESKTOP'}
 if(-not $Workspace){
@@ -122,6 +137,7 @@ try{
  [IO.File]::WriteAllText($marker,(@{schema=1;product='ngxz-ya';runtime='工作区';experience='工作区\经验库';connections='工作区\连接教练\连接经验';artifacts='artifacts';note='经验与程序更新独立保留；重新下载后仍使用这个工作区，不复制旧测试结果'}|ConvertTo-Json),[Text.UTF8Encoding]::new($true))
  [IO.Directory]::CreateDirectory((Join-Path $Workspace 'artifacts'))|Out-Null
  $locate=Join-Path $source '本机定位.json';if([IO.File]::Exists($locate)){[IO.File]::Copy($locate,(Join-Path $Workspace '本机定位.json'),$true)}
+ $origin=Join-Path $source '下载来源.json';if([IO.File]::Exists($origin)){[IO.File]::Copy($origin,(Join-Path $Workspace '下载来源.json'),$true)}
 [IO.Directory]::CreateDirectory((Join-Path $Workspace '成果'))|Out-Null
  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtime '安装卸载\安装.ps1') -PackageOnly
  if($LASTEXITCODE){throw '安装失败，保留工作区'}

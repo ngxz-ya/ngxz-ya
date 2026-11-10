@@ -1,4 +1,5 @@
-﻿# YA 插件 · 连接态登记。软件前台窗口可见、并且 Agent 已从软件读回真实状态之后调用；随后自动弹出 YA 白底卡。
+﻿# 第一步先读 AGENTS.md「第 0 步」。首连一条命令（包根）：.\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"
+# YA 插件 · 连接态登记。软件前台窗口可见、并且 Agent 已从软件读回真实状态之后调用；随后自动弹出 YA 白底卡。
 # 软件无关：soft= 写你实际连上的那款软件的名字（卡上显示「连接成功 · 名字」）。
 #   powershell -NoProfile -ExecutionPolicy Bypass -File ".\YA插件\ya_link.ps1" soft=软件名 pid=软件主窗口进程号 slot=经验槽 [prepare=1] [log=Agent输出日志] [agent=Agent名] [agent_pid=Agent进程号]
 # 经 WMI 等系统进程转调时（父进程是 WmiPrvSE），Agent 的环境变量和父子链都断了：要显式传 log= / agent= / agent_pid=（快连.ps1 会自动传）。

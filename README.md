@@ -1,8 +1,8 @@
-# ngxz-ya｜通用机械软件 AI 连接与经验复用工具包
+﻿# ngxz-ya｜通用机械软件 AI 连接与经验复用工具包
 
 让 Agent 边做事，边留下下次用得上的方法。
 
-> **Agent 必读（先于一切）：** ① GitHub 页面读不到也直接下载 `https://codeload.github.com/ngxz-ya/ngxz-ya/zip/refs/heads/main`，**解压到当前目录**（不要放 Temp 或别处），进入 `ngxz-ya-main` 后先读 `AGENTS.md` 再做任何事；② 运行 `连接教练\定位软件.ps1 -Software "<软件名>"` 定位目标软件（下载前如需确认，只能定向查注册项、App Paths、环境变量、该软件厂商目录）；③ 每个大步骤前运行 `连接教练\越界路径审计.ps1`，命中即本轮失败并停止。禁止列举用户主目录、桌面、文档、下载、盘符根、`Program Files` 根，禁止读 `.gitconfig` 和其他项目。详见 [AGENTS.md](AGENTS.md) 第 0 步。
+> **Agent 必读（先于一切）：第一步先读 [AGENTS.md](AGENTS.md)「第 0 步」。** ① 下载 `https://codeload.github.com/ngxz-ya/ngxz-ya/zip/refs/heads/main` 解压（优先当前目录；已在 `%TEMP%` 也可，但不得碰 Temp 里其他文件）；② 在包根运行一条命令 `.\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"`——它会落位到起点目录、定位软件、部署工作区、查通用卡、有经验就快连，没有就打印后续现成命令；③ 每个大步骤前运行 `连接教练\越界路径审计.ps1`，命中即本轮失败并停止。禁止列举用户主目录、桌面、文档、下载、盘符根、`Program Files` 根，禁止读 `.gitconfig` 和其他项目。
 
 ngxz-ya 给 AI Agent 和机械软件搭一座桥。连接并验收通过后，你可以继续在对话里说「做一个长方体」「把长度改成 35 毫米」，Agent 在同一个软件窗口里执行，读回结果确认改对了，再把验证过的方法存到本机。
 

@@ -1,4 +1,5 @@
-﻿param([Parameter(Mandatory=$true)][string]$Software,[ValidateSet('New','Check')][string]$Action='New')
+﻿# 第一步先读 AGENTS.md「第 0 步」。首连一条命令（包根）：.\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"
+param([Parameter(Mandatory=$true)][string]$Software,[ValidateSet('New','Check')][string]$Action='New')
 $ErrorActionPreference='Stop'
 $pkg=Split-Path $PSScriptRoot -Parent
 . (Join-Path $pkg 'YA插件\连接上下文.ps1')

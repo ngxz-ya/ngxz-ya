@@ -1,4 +1,5 @@
-﻿# 连接经验（跨软件通用）：find 只读查卡 / add 登记候选卡（索引和目录都查重、缺文件的索引行不算重复、必填、禁词、强制整数 v=0）/ list / rebuild（小数 v 不收成 0；卡里或文件名里有禁止词也拒绝整次重建，不写进索引；索引不改）。
+﻿# 第一步先读 AGENTS.md「第 0 步」。首连一条命令（包根）：.\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"
+# 连接经验（跨软件通用）：find 只读查卡 / add 登记候选卡（索引和目录都查重、缺文件的索引行不算重复、必填、禁词、强制整数 v=0）/ list / rebuild（小数 v 不收成 0；卡里或文件名里有禁止词也拒绝整次重建，不写进索引；索引不改）。
 # 在本包根目录：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File ".\连接教练\连接经验\连接经验.ps1" find task="连接 NX"
 #   powershell -NoProfile -ExecutionPolicy Bypass -File ".\连接教练\连接经验\连接经验.ps1" find slot=nx
@@ -158,7 +159,7 @@ try {
       if ($hits.Count -gt 0) {
         Write-Output 'next: 有 fast: 行就直接跑那条（快连.ps1），看最后 RESULT；没有才只读那张卡照「步骤」做。核「适用前提」，参数不同只改参数（快连.ps1 key=值 覆盖），不重新摸索、不先上网。v=0 也要看前台复核和读回。'
       } else {
-        Write-Output 'next: 本软件没有私有连接卡。先按README在本测试副本用连接软件.ps1 Check核对注册适配器；没有适配器报告UNSUPPORTED。未预置合法通法时不读取缺失G-*卡，自主探索须另行授权并审查接口来源。'
+        Write-Output 'next: 本软件没有本机连接卡（首连）。按 一键连接.ps1 打印的 NEED_AGENT_METHOD 步骤上网找合法官方/开源接口并审查来源，测通后用 add 存卡；不读取本包以外的任何旧卡或旧项目。'
       }
       Write-Output 'RESULT: OK'
     }

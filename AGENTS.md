@@ -6,21 +6,23 @@
 
 收到「仓库地址＋连接某软件」后，**只能**按下面顺序做。本节优先于本文件其他所有内容，也优先于 Agent 自己的习惯做法。
 
-1. **下载到当前目录，不看别处。** 当前工作目录（通常是用户在桌面新建的空文件夹）就是本轮起点。GitHub 页面读不到也不要紧，直接下载 ZIP，**解压到当前目录**；绝不下载或解压到 `%TEMP%` 或其他任何位置：
+1. **下载解压本包。** 优先解压到当前工作目录（本轮起点，通常是用户在桌面新建的空文件夹）：
    ```powershell
    Invoke-WebRequest https://codeload.github.com/ngxz-ya/ngxz-ya/zip/refs/heads/main -OutFile ngxz.zip -UseBasicParsing
    Expand-Archive ngxz.zip . ; Set-Location ngxz-ya-main
    ```
-   （备用地址 `https://github.com/ngxz-ya/ngxz-ya/archive/refs/heads/main.zip`。）解压后**先读 `ngxz-ya-main\AGENTS.md`，再做任何其他事**。之后只在 `ngxz-ya-main` 和起点目录内工作。下载失败就报告原因并停止，不得去本机找旧包。
-   下载前如需确认目标软件是否安装，只允许定向查：卸载注册项、App Paths、环境变量值、该软件厂商目录（如 `Program Files\<厂商>`）；**不得列举任何盘符根或 `Program Files` 根**。
-2. **定位目标软件（本轮唯一允许的本机探测）。** 在包根运行：
-   `powershell -NoProfile -ExecutionPolicy Bypass -File 连接教练\定位软件.ps1 -Software "<软件名>"`
-   脚本只查注册表卸载项、App Paths、环境变量值和 Program Files 下两级厂商目录，结果写入包根 `本机定位.json`。之后所有步骤**只用** `install_dirs` 里的路径。退出码 3（找不到）就报告并停止，不得自己扩大搜索。
-3. **每个大步骤前跑越界审计。** 大步骤 = 部署工作区、写/编译桥接、启动或接入软件、改模、独立读回、接通 YA、报告结果。运行：
+   （备用 `https://github.com/ngxz-ya/ngxz-ya/archive/refs/heads/main.zip`。）读到本文件前已下载/解压到 `%TEMP%` 也**不算越界**，但只能碰本包自己的下载文件；`%TEMP%` 里其他任何文件不得列举或读取。下一步会把本包挪回起点目录。下载失败就报告并停止，不得去本机找旧包。
+   下载前如需确认目标软件是否安装，只允许定向查：卸载注册项、App Paths、环境变量值、该软件厂商目录；**不得列举任何盘符根或 `Program Files` 根**。
+2. **一条命令跑通用脚本链。** 在包根运行：
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录（你的 cwd）>"
+   ```
+   它依次完成：**0 落位**（包在 `%TEMP%` 时复制到 `起点目录\ngxz-ya-main`，之后只在那里工作）→ **1 定位软件**（`连接教练\定位软件.ps1`，本轮唯一允许的本机探测，写 `本机定位.json`；退出码 3 = 找不到，报告并停止）→ **2 部署工作区**（`起点目录\ngxz-ya-ws`，路径短）→ **3 连接前查通用卡**（自动记录）→ **4 有本机连接经验就快连**；没有就停在 `NEED_AGENT_METHOD` 并打印后续每一步的现成命令（编译桥接 `适配器\编译桥接.ps1`、启动软件 `适配器\启动软件.ps1`、握手登记 `YA插件\ya_link.ps1`、改模验收 `连接软件.ps1 -Action Connect -TaskFile`、存经验 `连接经验.ps1 add`）。**按它的输出继续，不要另起炉灶。** 包内不含任何软件专属连接方法：接口要你上网找合法官方/开源资料。
+3. **每个大步骤前跑越界审计。** 大步骤 = 部署工作区、写/编译桥接、启动或接入软件、改模、独立读回、接通 YA、报告结果：
    `powershell -NoProfile -ExecutionPolicy Bypass -File 连接教练\越界路径审计.ps1 -Paths <本轮已访问及本步将访问的全部包外绝对路径或命令原文>`
-   退出码 2（`OVERREACH_FAIL`）= **本轮失败**：立即停止，不再执行任何后续步骤，向用户如实报告命中路径。不得「先做完再说」，也不得把越界后的结果报告为连上。
-4. 之后按下文「接入方式」「完成标准」执行。部署工作区用 `启动.ps1 -Software "<软件名>" -Fresh`，默认工作区是起点目录下的 `ngxz-ya-ws`，路径短，避免超过 Windows 260 字符。
-
+   退出码 2（`OVERREACH_FAIL`）= **本轮失败**：立即停止，不再执行任何后续步骤，向用户如实报告命中路径。
+4. **通用卡必须查、必须留证。** 连接前一键连接已自动查卡；**建模/改模前**必须运行 `连接教练\查通用卡.ps1 -Stage 建模前`（工程图任务另查 `-Q 尺寸编号` 取 `G-MODEL-004`），读全文用 `-Get <编号>`，照做了就 `-Apply <编号> -How "<用在哪一步>"`。记录在 `ngxz-ya-ws\artifacts\card-calls.jsonl`，最终报告引用它；没查就如实写没查。
+5. 之后按下文「接入方式」「完成标准」执行。
 ### 禁止清单（任何一条发生即本轮失败）
 
 - 列举或读取用户主目录（`%USERPROFILE%`、`$HOME`、`~`）、桌面（起点文件夹本身除外）、文档、下载、图片等用户文件夹。

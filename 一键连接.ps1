@@ -1,0 +1,85 @@
+﻿# 第一步先读 AGENTS.md「第 0 步」。这是一条命令的通用脚本链入口（任何机械软件同一套，不含任何软件专属连接方法）。
+# 用法（在包根）：powershell -NoProfile -ExecutionPolicy Bypass -File .\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"
+# 阶段：0 落位 → 1 定位软件 → 2 部署工作区 → 3 连接前查通用卡 → 4 有本机连接经验就快连 / 没有就停在 NEED_AGENT_METHOD 并打印后续命令。
+param([Parameter(Mandatory=$true)][string]$Software,[string]$StartDir,[string]$Slot,[switch]$NoPanel)
+$ErrorActionPreference='Stop'
+try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
+$t0=Get-Date
+function Say([string]$s){Write-Output ('['+('{0,6:N1}' -f ((Get-Date)-$t0).TotalSeconds)+'s] '+$s)}
+function PS1([string]$f,[string[]]$a){& powershell -NoProfile -ExecutionPolicy Bypass -File $f @a|Out-Host;return $LASTEXITCODE}
+$me=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
+Write-Output '== ngxz-ya 一键连接（通用脚本链）=='
+Write-Output 'STEP0: 只碰本包、起点目录、本机定位.json 的 install_dirs；每个大步骤前跑 连接教练\越界路径审计.ps1（退出码 2=本轮失败，立即停）。'
+Write-Output 'CHAIN: 0落位 → 1定位软件 → 2部署工作区 → 3连接前查通用卡 → 4快连(有经验) | NEED_AGENT_METHOD(无经验：上网找合法方法 → 编译桥接 → 启动软件 → 握手登记 → 建模前查卡 → Connect改模+独立读回 → 存经验)'
+if((Split-Path $me -Leaf) -eq '工作区'){Write-Output 'WRONG_ENTRY: 请在下载包根（ngxz-ya-main）运行本脚本，不要在 工作区 内运行';exit 9}
+# 0 落位
+$lw=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $me '连接教练\落位.ps1') -Package $me @(if($StartDir){@('-StartDir',$StartDir)})
+$lc=$LASTEXITCODE;$lw|Where-Object{$_ -notmatch '^\{'}|ForEach-Object{Say $_}
+if($lc -ne 0){exit $lc}
+$r=($lw|Where-Object{$_ -match '^\{'}|Select-Object -Last 1)|ConvertFrom-Json
+if($r.moved){
+  Say ('0 落位：转到 '+$r.package+' 继续（之后只在那里工作）')
+  $a=@('-Software',$Software,'-StartDir',(Split-Path $r.package -Parent));if($Slot){$a+=@('-Slot',$Slot)};if($NoPanel){$a+='-NoPanel'}
+  exit (PS1 (Join-Path $r.package '一键连接.ps1') $a)
+}
+Say ('0 落位：本包在 '+$me)
+# 1 定位
+$lo=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $me '连接教练\定位软件.ps1') -Software $Software;$c=$LASTEXITCODE;$lo|Where-Object{$_ -match '^(LOCATED|NOT_FOUND)'}|ForEach-Object{Say $_}
+if($c -eq 3){Say 'STOP 1 定位：没找到目标软件。按规则报告并停止，不得自行扩大搜索。';exit 3}
+if($c -ne 0){Say ('STOP 1 定位失败 exit='+$c);exit $c}
+$loc=Get-Content -LiteralPath (Join-Path $me '本机定位.json') -Raw -Encoding UTF8|ConvertFrom-Json
+Say ('1 定位：install_dirs = '+(@($loc.install_dirs) -join ' ; '))
+# 2 部署
+$start=Split-Path $me -Parent
+$desk=[IO.Path]::GetFullPath([Environment]::GetFolderPath('DesktopDirectory')).TrimEnd('\')
+$wsRoot=$(if($start -ieq $desk){Join-Path $desk 'ngxz-ya'}else{Join-Path $start 'ngxz-ya-ws'})
+$a=@('-Software',$Software);if(-not (Test-Path -LiteralPath $wsRoot)){$a+='-Fresh'};if($NoPanel){$a+='-NoPanel'}
+$src=Join-Path $me '下载来源.json'
+$out=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $me '启动.ps1') @a
+$dc=$LASTEXITCODE;$out|ForEach-Object{Write-Output $_}
+$wl=$out|Where-Object{$_ -match '^workspace: '}|Select-Object -Last 1
+if(-not $wl){Say ('STOP 2 部署失败 exit='+$dc+'（保留现场，报告上面原文）');exit 2}
+$rt=$wl.Substring(11).Trim();$ws=Split-Path $rt -Parent
+if([IO.File]::Exists($src)){[IO.File]::Copy($src,(Join-Path $ws '下载来源.json'),$true)}
+Say ('2 部署：工作区 = '+$rt+'（Check exit='+$dc+'，FRONTEND_ADAPTER_MISSING 等在首连时属正常）')
+# 3 连接前查通用卡
+$cl=Join-Path $ws 'artifacts\card-calls.jsonl'
+PS1 (Join-Path $rt '连接教练\查通用卡.ps1') @('-Stage','连接前','-Log',$cl)|Out-Null
+Say ('3 查卡：已记录 '+$cl)
+# 4 复用
+if(-not $Slot){$Slot=(($Software.ToLowerInvariant()) -replace '[^a-z0-9]','')}
+$fast=$false
+if($Slot){
+  Push-Location $rt
+  try{$f=& powershell -NoProfile -ExecutionPolicy Bypass -File '.\连接教练\连接经验\连接经验.ps1' find ("task=连接 "+$Software)}finally{Pop-Location}
+  $f|ForEach-Object{Write-Output $_}
+  $fl=@($f|Where-Object{$_ -match 'fast:.*slot=([A-Za-z0-9_-]+)'})
+  if($fl){$fast=$true;[void]($fl[0] -match 'slot=([A-Za-z0-9_-]+)');$Slot=$matches[1]}
+}
+if($fast){
+  Say ('4 复用：发现本机连接经验（槽 '+$Slot+'），跑 快连.ps1')
+  Push-Location $rt
+  try{$q=& powershell -NoProfile -ExecutionPolicy Bypass -File '.\连接教练\连接经验\快连.ps1' ("slot="+$Slot);$qc=$LASTEXITCODE}finally{Pop-Location}
+  $q|ForEach-Object{Write-Output $_}
+  if(@($q|Where-Object{$_ -match 'RESULT: (OK|ALREADY_REGISTERED)'}).Count){
+    Say ('CONNECTED_VIA_SAVED_EXPERIENCE 槽='+$Slot+' 用时 '+[Math]::Round(((Get-Date)-$t0).TotalSeconds,1)+'s')
+    Write-Output ('下一步（改模验收）：cd "'+$rt+'"；建模前 .\连接教练\查通用卡.ps1 -Stage 建模前；写任务 JSON；.\连接软件.ps1 -Software "'+$Software+'" -Action Connect -TaskFile <任务.json>')
+    exit 0
+  }
+  Say ('STOP 4 快连未通过 exit='+$qc+'：不重试、不杀进程；按输出排查。如卡已不适用，按 NEED_AGENT_METHOD 流程修好后改原卡。');exit 4
+}
+Say '4 复用：本机没有该软件的连接经验（首连）。'
+Write-Output ''
+Write-Output 'NEED_AGENT_METHOD — 包内不含任何软件专属连接方法，下面每一步由你完成；每个大步骤前先跑越界审计：'
+Write-Output ('  工作目录：cd "'+$rt+'"   软件槽：'+$Slot+'   证据目录：'+(Join-Path $ws 'artifacts'))
+Write-Output '  a) 上网找合法方法：官方 API / SDK 文档、GitHub「<软件名> MCP / GUI bridge / active document」、MCP Registry。只用 本机定位.json install_dirs 里的文件核对版本与接口。'
+Write-Output ('  b) 生成驱动草稿：.\适配器\准备接入.ps1 -Software "'+$Software+'"')
+Write-Output ('  c) 桥接源码只写在 连接教练\连接经验\'+$Slot+'\ 或 artifacts 内；编译：.\适配器\编译桥接.ps1 -Source <.cs> -Out <dll> -References <install_dirs 内的官方程序集>')
+Write-Output '  d) 启动软件（脱离 Agent 作业、可带只作用于本次的环境变量）：.\适配器\启动软件.ps1 -Exe <install_dirs 内可执行文件> [-Env 名=值] [-Arguments ...]'
+Write-Output '     软件若自动加载包外自定义/插件目录：用官方文档的环境变量/参数指向 artifacts 内空配置，不读取不加载那些目录。'
+Write-Output ('  e) 握手登记：.\YA插件\ya_link.ps1 soft='+$Software+' slot='+$Slot+' pid=<GUI PID> prepare=1 → 由软件内桥接写 readback → 去掉 prepare=1 再跑一次登记')
+Write-Output '  f) 建模前查卡：.\连接教练\查通用卡.ps1 -Stage 建模前；读全文 -Get <编号>；照做后 -Apply <编号> -How "..."'
+Write-Output ('  g) 改模+独立读回验收：.\连接软件.ps1 -Software "'+$Software+'" -Action Connect -TaskFile <任务.json>（见 适配器\说明.md）')
+Write-Output ('  h) 通过后立即存经验：写 连接卡 + 连接教练\连接经验\'+$Slot+'\快通道.ps1，再 .\连接教练\连接经验\连接经验.ps1 add slot='+$Slot+' file=<卡.json>；下次 一键连接 会直接快连。')
+Write-Output '  只有 Connect 返回 CONNECTED_INTERACTIVE 才算连上；任何一步失败如实报告，不把部分完成报成成功。'
+exit 20

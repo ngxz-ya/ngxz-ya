@@ -1,4 +1,5 @@
-﻿# Overreach audit (STEP 0 mandatory gate). Run before every major step: deploy workspace, write/compile bridge,
+﻿# 第一步先读 AGENTS.md「第 0 步」。
+# Overreach audit (STEP 0 mandatory gate). Run before every major step: deploy workspace, write/compile bridge,
 # start/attach software, edit model, independent readback, YA link, final report.
 # Exit 2 = OVERREACH_FAIL = this round FAILED: stop immediately, run nothing else, report the hit paths truthfully.
 # -Paths: every outside-package absolute path (or raw command text) accessed so far this round and planned for this step.
@@ -23,6 +24,12 @@ Allow $self
 Allow (Split-Path $self -Parent)
 if((Split-Path $self -Leaf) -eq '工作区'){Allow (Split-Path (Split-Path $self -Parent) -Parent)}
 Allow (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'ngxz-ya')
+# the agent's OWN fresh package download in %TEMP% is allowed (only this package's own download dir/zip; other Temp files stay forbidden)
+$tmpN=Norm $env:TEMP
+if($tmpN -and $self.StartsWith($tmpN+'\',[StringComparison]::OrdinalIgnoreCase)){Allow (Join-Path $tmpN ($self.Substring($tmpN.Length+1).Split('\')[0]))}
+foreach($of in @((Join-Path $self '下载来源.json'),(Join-Path (Split-Path $self -Parent) '下载来源.json'))){
+  if([IO.File]::Exists($of)){try{$oj=Get-Content -LiteralPath $of -Raw -Encoding UTF8|ConvertFrom-Json;Allow $oj.origin_top;Allow $oj.start_dir}catch{}}
+}
 # located target software (+ its vendor folder)
 $tokens=New-Object System.Collections.Generic.List[string]
 if($loc){
@@ -41,6 +48,8 @@ $tk=@($tokens|Where-Object{$_ -and $_.Length -ge 2}|Select-Object -Unique)
 if($tk.Count){$tokRx=New-Object regex ('(?i)^('+(($tk|ForEach-Object{[regex]::Escape($_)}) -join '|')+')([ 0-9.]|$)')}
 $hits=New-Object System.Collections.Generic.List[string]
 function Test-One([string]$raw){
+  $nn=Norm (($raw -split ' -')[0].Trim('"',"'"))
+  if($nn -and $tmpN -and $nn.StartsWith($tmpN+'\',[StringComparison]::OrdinalIgnoreCase) -and $nn.Substring($tmpN.Length+1).Split('\')[0] -match '(?i)^ngxz'){return $true}
   foreach($r in $allowed){
     if($raw.StartsWith($r,[StringComparison]::OrdinalIgnoreCase)){
       if($raw.Length -eq $r.Length -or $raw[$r.Length] -in @('\',' ','"',"'",')')){return $true}
