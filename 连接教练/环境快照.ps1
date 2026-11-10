@@ -1,9 +1,13 @@
 ﻿# 第一步先读 AGENTS.md「第 0 步」。环境快照（软件无关）：记录用户/系统环境变量、目标软件厂商注册表、开机自启项；之后对比，发现本轮改动即越界。
 # 快照（一键连接第 1 步自动做；测试方开测前也做）：powershell -NoProfile -ExecutionPolicy Bypass -File 连接教练\环境快照.ps1 -Mode Snapshot [-Out <json>]
 # 对比（越界审计每次自动对比环境变量和注册表；报告前再加 -ScanInstall 查 install_dirs 是否被写过）：... -Mode Diff [-Snap <json>] [-ScanInstall]
-# 退出码：0 = ENV_CLEAN / 快照完成；2 = ENV_CHANGED（本轮失败，如实报告改动项）；3 = 没有快照。
+# 开测前硬检查（一键连接第 1b 步自动做；测试方也做）：... -Mode Precheck [-ExtraNames "<名字正则>"]
+#   用户/系统持久环境变量里不得有：NGXZ_* / YALINK_*（非空）、名字含 STARTUP / USER_DIR / CUSTOM_DIR / PLUGIN / ADDIN / EXTENSION 的变量（非空），
+#   以及值指向 ngxz* 目录、artifacts、本起点目录或 .dll 的变量——这些是旧轮次/旧桥接残留，会让软件开机就加载旧桥接，测试不再是「从零」。
+#   有就退出码 2 ENV_PRECHECK_DIRTY 并停止：Agent 不得自己删（禁止持久改环境），报告用户清理后再跑。软件安装程序自己设的变量（值只指向 install_dirs，名字不命中上面规则）不算。
+# 退出码：0 = ENV_CLEAN / 快照完成 / PRECHECK_CLEAN；2 = ENV_CHANGED / ENV_PRECHECK_DIRTY（本轮失败或不能开测，如实报告）；3 = 没有快照。
 # 规则：本轮只允许进程级环境变量（启动软件.ps1 -Env 名=值）。禁止 setx、[Environment]::SetEnvironmentVariable(...,'User'/'Machine')、写注册表。
-param([ValidateSet('Snapshot','Diff')][string]$Mode='Diff',[string]$Snap,[string]$Out,[string]$LocateFile,[switch]$ScanInstall,[switch]$Quiet)
+param([ValidateSet('Snapshot','Diff','Precheck')][string]$Mode='Diff',[string]$ExtraNames,[string]$Snap,[string]$Out,[string]$LocateFile,[switch]$ScanInstall,[switch]$Quiet)
 $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $self=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
@@ -34,6 +38,24 @@ function Take{
   foreach($p in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce')){Dump-Key $p $reg 500}
   foreach($v in @($o.vendors)){foreach($p in @("HKCU:\Software\$v","HKLM:\SOFTWARE\$v","HKLM:\SOFTWARE\WOW6432Node\$v")){Dump-Key $p $reg}}
   $o.reg=$reg;return $o
+}
+if($Mode -eq 'Precheck'){
+  $bad=New-Object System.Collections.Generic.List[string]
+  $sd=$(if($loc -and $loc.start_dir){[string]$loc.start_dir}else{Split-Path $self -Parent})
+  $nameRx='(?i)(^(NGXZ|YALINK)_)|((^|_)(USER_?STARTUP|STARTUP|USER_DIR|CUSTOM_DIR(ECTORY)?(_FILE)?|PLUGINS?|ADDINS?|EXTENSIONS?)(_|$))'
+  foreach($t in @('User','Machine')){
+    foreach($e in [Environment]::GetEnvironmentVariables($t).GetEnumerator()){
+      $k=[string]$e.Key;$v=[string]$e.Value;if(-not $v.Trim()){continue}
+      $why=''
+      if($k -match $nameRx){$why='名字像插件/启动/本包变量'}
+      elseif($ExtraNames -and $k -match $ExtraNames){$why='命中 -ExtraNames'}
+      elseif($v -match '(?i)\\ngxz|\\artifacts(\\|;|$)|\.dll(;|$)'){$why='值指向 ngxz*/artifacts/.dll'}
+      elseif($sd -and $sd.Length -gt 3 -and $v.IndexOf($sd,[StringComparison]::OrdinalIgnoreCase) -ge 0){$why='值指向本起点目录'}
+      if($why){$bad.Add($t+' '+$k+'='+$v+'  ('+$why+')')}
+    }
+  }
+  if($bad.Count){[ordered]@{status='ENV_PRECHECK_DIRTY';dirty=@($bad);next='不能开测：这些持久环境变量是旧轮次/旧桥接残留，会让软件启动时加载旧东西。Agent 不得自己删除（禁止持久改环境）；如实报告用户，由用户清理后重跑。'}|ConvertTo-Json -Depth 4 -Compress;exit 2}
+  [ordered]@{status='PRECHECK_CLEAN';dirty=@()}|ConvertTo-Json -Compress;exit 0
 }
 if(-not $Snap){$Snap=Default-Snap}
 if($Mode -eq 'Snapshot'){

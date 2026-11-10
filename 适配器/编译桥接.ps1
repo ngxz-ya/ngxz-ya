@@ -6,12 +6,15 @@
 # 硬闸：编译前先过 连接教练\来源闸.ps1 -Check（上网搜到的开源/官方方案要登记进 artifacts\sources.json），不合格退出码 5。
 # 版本：每次编译记一行 artifacts\bridge-builds.jsonl（build 号、sha256），旁边写 <dll>.version.json；第 2 次起打印 RELOAD_REQUIRED。
 #      -Versioned：输出成 <名>.v<build>.dll（旧版本被软件占用时用；别把多个版本放进软件会自动加载的目录）。
-param([Parameter(Mandatory=$true)][string[]]$Source,[Parameter(Mandatory=$true)][string]$Out,[string[]]$References=@(),[ValidateSet('library','exe')][string]$Target='library',[ValidateSet('x64','anycpu','x86')][string]$Platform='x64',[string]$Win32Resource='',[string[]]$Resources=@(),[switch]$Versioned)
+# 最小插件闸：完整桥接之前必须先过 适配器\最小插件验证.ps1（空插件被软件加载并经软件日志确认，artifacts\minplugin\verified.json）。
+#      编空插件用 -Probe（-Out 必须在 工作区\artifacts\minplugin 内），不需要 verified.json；不带 -Probe 而没验证过 → 退出码 8 MINPLUGIN_REQUIRED。
+param([Parameter(Mandatory=$true)][string[]]$Source,[Parameter(Mandatory=$true)][string]$Out,[string[]]$References=@(),[ValidateSet('library','exe')][string]$Target='library',[ValidateSet('x64','anycpu','x86')][string]$Platform='x64',[string]$Win32Resource='',[string[]]$Resources=@(),[switch]$Versioned,[switch]$Probe)
 $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 function Norm([string]$x){[IO.Path]::GetFullPath($x).TrimEnd('\')}
 $pkg=Norm (Join-Path $PSScriptRoot '..')
-$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{$pkg})
+function WsOf([string]$p){if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $p}
+$ws=WsOf $pkg
 function Under([string]$x,[string[]]$roots){$n=Norm $x;foreach($r in $roots){if($r -and $n.StartsWith((Norm $r)+'\',[StringComparison]::OrdinalIgnoreCase)){return $true}};return $false}
 $locFile=@((Join-Path $ws '本机定位.json'),(Join-Path $pkg '本机定位.json'))|Where-Object{[IO.File]::Exists($_)}|Select-Object -First 1
 $inst=@();if($locFile){$inst=@((Get-Content -LiteralPath $locFile -Raw -Encoding UTF8|ConvertFrom-Json).install_dirs)}
@@ -24,6 +27,15 @@ $res=@($Resources|ForEach-Object{$_ -split ','}|Where-Object{$_})
 foreach($r in @($res)+@($Win32Resource|Where-Object{$_})){if(-not (Under $r (@($inst)+@($pkg,$ws)))){Write-Output ('RESOURCE_OUTSIDE_ALLOWED: '+$r+' （只允许 install_dirs / 本包 / 工作区）');exit 2}}
 $gate=@(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '连接教练\来源闸.ps1') -Check);$gc=$LASTEXITCODE;$gate|ForEach-Object{Write-Output $_}
 if($gc -ne 0){Write-Output 'BUILD_REFUSED: 来源闸未通过。先上网搜开源/官方连接方案并登记 sources.json，再编译。';exit 5}
+$mpDir=Join-Path $ws 'artifacts\minplugin'
+if($Probe){
+  if(-not (Under $Out @($mpDir))){Write-Output ('PROBE_OUT_OUTSIDE: -Probe 的 -Out 必须在 '+$mpDir+' 内');exit 2}
+  if(-not [IO.File]::Exists((Join-Path $mpDir 'probe.json'))){Write-Output 'PROBE_NOT_INIT: 先运行 适配器\最小插件验证.ps1 -Init 拿 ready 文件路径和口令';exit 2}
+}else{
+  $vf=Join-Path $mpDir 'verified.json';$okv=$false
+  if([IO.File]::Exists($vf)){try{$vj=[IO.File]::ReadAllText($vf,[Text.Encoding]::UTF8)|ConvertFrom-Json;$pj=[IO.File]::ReadAllText((Join-Path $mpDir 'probe.json'),[Text.Encoding]::UTF8)|ConvertFrom-Json;$okv=([string]$vj.token -eq [string]$pj.token -and [int]$vj.target_pid -gt 0 -and [string]$vj.log_file)}catch{}}
+  if(-not $okv){Write-Output 'MINPLUGIN_REQUIRED: 完整桥接之前先做最小插件验证：适配器\最小插件验证.ps1 -Init → 编译桥接.ps1 -Probe 编空插件 → 按来源资料的方式让软件加载 → 最小插件验证.ps1 -Verify -TargetPid <PID> 通过（MINPLUGIN_VERIFIED）后再编完整桥接。';exit 8}
+}
 $art=Join-Path $ws 'artifacts';[IO.Directory]::CreateDirectory($art)|Out-Null;$bl=Join-Path $art 'bridge-builds.jsonl'
 $prev=@();if([IO.File]::Exists($bl)){$prev=@([IO.File]::ReadAllLines($bl,[Text.Encoding]::UTF8)|Where-Object{$_}|ForEach-Object{try{$_|ConvertFrom-Json}catch{}}|Where-Object{$_ -and [string]$_.out -ieq (Norm $Out)})}
 $ver=$prev.Count+1
@@ -45,10 +57,11 @@ if($code -ne 0){
   Write-Output ('BUILD_FAIL exit='+$code+' log='+$log);exit 1}
 $h=(Get-FileHash -LiteralPath $outFile).Hash
 $last=$prev|Select-Object -Last 1;$changed=[bool]($last -and [string]$last.sha256 -ne $h)
-$rec=[ordered]@{utc=[DateTime]::UtcNow.ToString('o');out=(Norm $Out);file=$outFile;build=$ver;sha256=$h;changed_from_previous=$changed}
+$rec=[ordered]@{utc=[DateTime]::UtcNow.ToString('o');kind=$(if($Probe){'probe'}else{'bridge'});out=(Norm $Out);file=$outFile;build=$ver;sha256=$h;changed_from_previous=$changed}
 [IO.File]::AppendAllText($bl,(($rec|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText($outFile+'.version.json',($rec|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
 Write-Output ('BUILD_OK out='+$outFile+' build=v'+$ver+' sha256='+$h+' log='+$log)
+if($Probe){Write-Output '  这是空插件（-Probe）：按来源资料的加载方式让软件加载，然后 适配器\最小插件验证.ps1 -Verify -TargetPid <PID>。';exit 0}
 Write-Output ('  桥接里请把 bridge_build='+$ver+' / bridge_sha256 前 12 位 '+$h.Substring(0,12)+' 放进 QUERY_SESSION 回复，好核对软件里跑的是哪一版。')
 if($ver -gt 1){Write-Output ('RELOAD_REQUIRED: 这是同一输出第 '+$ver+' 次编译'+$(if($changed){'（内容已变）'}else{''})+'。软件里已加载的旧桥接不会自动换成新文件：按软件官方方式卸载/重载桥接，或退出软件后用 适配器\启动软件.ps1 重启；重连后用 适配器\调用桥接.ps1 QUERY_SESSION 核对 bridge_build=v'+$ver+'。没重载就测 = 测的还是旧版本。')}
 exit 0

@@ -4,9 +4,14 @@
 # -Exe 必须位于 本机定位.json 的 install_dirs 内，否则拒绝。-Env 只作用于本次启动的子进程（不改系统/用户环境变量）。
 # 若软件启动日志显示它会自动加载包外的自定义/插件/启动目录：用该软件官方文档写明的环境变量或参数（-Env/-Arguments）指向本轮 artifacts 内的空配置，不要读取、复制或加载那些包外目录。
 # 不按进程名杀进程、不重启已有使用者的窗口。失败时保留现场并报告原始信息。
-param([Parameter(Mandatory=$true)][string]$Exe,[string[]]$Arguments=@(),[string]$ArgumentLine,[string[]]$Env=@(),[string]$Directory,[ValidateRange(5,900)][int]$WaitSeconds=180)
+# 必须经限时运行调用：powershell -NoProfile -ExecutionPolicy Bypass -File 适配器\限时运行.ps1 -File 适配器\启动软件.ps1 -TimeoutSec 300 -ArgLine:"-Exe <主程序.exe> -WaitSeconds 240 [-Env 名=值]"（直接调用退出码 9 UNTIMED_LAUNCH）。
+# 默认把软件进程的 TEMP/TMP 指到 本次 launch 目录\tmp（只作用于该进程），软件写在临时目录的日志就落在本轮 artifacts，供 最小插件验证.ps1 查；-KeepTemp 不改。
+# 本脚本是包自身脚本：Agent 不得修改（越界审计核对包文件哈希，改了 = 本轮失败）。启动方式不适用时如实报告。
+param([Parameter(Mandatory=$true)][string]$Exe,[string[]]$Arguments=@(),[string]$ArgumentLine,[string[]]$Env=@(),[string]$Directory,[ValidateRange(5,900)][int]$WaitSeconds=180,[switch]$KeepTemp)
 $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
+$timedRun=[string]$env:NGXZ_TIMED
+if(-not $timedRun){Write-Output 'UNTIMED_LAUNCH: 启动软件.ps1 必须经 适配器\限时运行.ps1 调用：powershell -NoProfile -ExecutionPolicy Bypass -File 适配器\限时运行.ps1 -File 适配器\启动软件.ps1 -TimeoutSec 300 -ArgLine:"-Exe <主程序.exe> -WaitSeconds 240"';exit 9}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
 $ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{$pkg})
 $locFile=@((Join-Path $ws '本机定位.json'),(Join-Path $pkg '本机定位.json'))|Where-Object{[IO.File]::Exists($_)}|Select-Object -First 1
@@ -23,6 +28,9 @@ if(-not $Directory){$Directory=Join-Path $ws ('artifacts\launch-'+$stamp)}
 if($ArgumentLine){$Arguments=@([regex]::Matches($ArgumentLine,'"([^"]*)"|(\S+)')|ForEach-Object{if($_.Groups[1].Success){$_.Groups[1].Value}else{$_.Groups[2].Value}})}
 $set=@{}
 foreach($kv in $Env){if($kv -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$'){throw ('ENV_FORMAT: '+$kv)};$set[$matches[1]]=$matches[2]}
+[Environment]::SetEnvironmentVariable('NGXZ_TIMED',$null,'Process')
+$tempDir=''
+if(-not $KeepTemp -and -not ($set.ContainsKey('TEMP') -or $set.ContainsKey('TMP'))){$tempDir=Join-Path $Directory 'tmp';[IO.Directory]::CreateDirectory($tempDir)|Out-Null;$set['TEMP']=$tempDir;$set['TMP']=$tempDir}
 foreach($k in $set.Keys){[Environment]::SetEnvironmentVariable($k,$set[$k],'Process')}
 $t0=Get-Date
 $via='CreateProcess(breakaway)'
@@ -42,16 +50,27 @@ catch{
 }
 Write-Output ('LAUNCHED pid='+$id+' via='+$via+' exe='+$exeFull)
 $title='';$hwnd=0;$exited=$null;$dialogs=@()
+if(-not ('NgxzDesk' -as [type])){Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class NgxzDesk{[DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c,string t);}'}
+$interactive=([NgxzDesk]::FindWindow('Shell_TrayWnd',$null) -ne [IntPtr]::Zero)
+$timed=Join-Path $PSScriptRoot '限时运行.ps1'
+if(-not $interactive){Write-Output 'NOT_INTERACTIVE_DESKTOP: 本命令跑在隔离桌面（看不到用户桌面窗口）；窗口/弹窗检查改经 限时运行 -OnDesktop 在用户桌面上做。之后窗口相关脚本（YA查询、弹窗守护、连接软件.ps1 Connect/Run、YA插件\ya_link.ps1、show_ya.ps1）都用 适配器\限时运行.ps1 -OnDesktop -File <脚本> 跑。'}
 $deadline=(Get-Date).AddSeconds($WaitSeconds)
 while((Get-Date) -lt $deadline){
   $pr=Get-Process -Id $id -ErrorAction SilentlyContinue
   if(-not $pr){$exited=$true;break}
-  $wd=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '弹窗守护.ps1') -TargetPid $id -Dismiss -Log (Join-Path $Directory 'dialogs.jsonl');$wd|Where-Object{$_ -match '^MODAL_DIALOG'}|ForEach-Object{$dialogs+=$_;Write-Output $_}
-  if($pr.MainWindowHandle -ne 0 -and $pr.MainWindowTitle){$hwnd=[int64]$pr.MainWindowHandle;$title=$pr.MainWindowTitle;break}
+  if($interactive){
+    $wd=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '弹窗守护.ps1') -TargetPid $id -Dismiss -Log (Join-Path $Directory 'dialogs.jsonl');$wd|Where-Object{$_ -match '^MODAL_DIALOG'}|ForEach-Object{$dialogs+=$_;Write-Output $_}
+    if($pr.MainWindowHandle -ne 0 -and $pr.MainWindowTitle){$hwnd=[int64]$pr.MainWindowHandle;$title=$pr.MainWindowTitle;break}
+  }else{
+    $wd=& $timed -File (Join-Path $PSScriptRoot '弹窗守护.ps1') -TimeoutSec 40 -OnDesktop -ArgLine ('-TargetPid '+$id+' -Dismiss -Log "'+(Join-Path $Directory 'dialogs.jsonl')+'"');$wd|Where-Object{$_ -match '^MODAL_DIALOG'}|ForEach-Object{$dialogs+=$_;Write-Output $_}
+    $q=& (Join-Path $PSScriptRoot 'YA查询.ps1') -TargetPid $id -TimeoutSec 30
+    $qj=$null;try{$qj=(@($q)|Where-Object{$_ -match '^\{'}|Select-Object -Last 1)|ConvertFrom-Json}catch{}
+    if($qj -and [int64]$qj.hwnd -ne 0 -and [string]$qj.title){$hwnd=[int64]$qj.hwnd;$title=[string]$qj.title;break}
+  }
   Start-Sleep -Seconds 2
 }
 $kids=@();try{$kids=@(Get-CimInstance Win32_Process -Filter ("ParentProcessId="+$id)|ForEach-Object{[ordered]@{pid=$_.ProcessId;name=$_.Name}})}catch{}
-$rec=[ordered]@{schema=1;pid=$id;via=$via;exe=$exeFull;arguments=$Arguments;env_keys=@($set.Keys);directory=$Directory;started_local=$t0.ToString('o');seconds=[Math]::Round(((Get-Date)-$t0).TotalSeconds,1);main_window=$hwnd;title=$title;exited=[bool]$exited;children=$kids;modal_dialogs=$dialogs}
+$rec=[ordered]@{schema=1;pid=$id;via=$via;interactive_desktop=$interactive;exe=$exeFull;arguments=$Arguments;env_keys=@($set.Keys);temp_dir=$tempDir;timed_run=$timedRun;directory=$Directory;started_local=$t0.ToString('o');seconds=[Math]::Round(((Get-Date)-$t0).TotalSeconds,1);main_window=$hwnd;title=$title;exited=[bool]$exited;children=$kids;modal_dialogs=$dialogs}
 $out=Join-Path $Directory 'launch.json'
 [IO.File]::WriteAllText($out,($rec|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($true))
 if($dialogs.Count){Write-Output ('MODAL_DIALOG_FAILPOINT: 启动期间出现 '+$dialogs.Count+' 个错误弹窗（已静默关闭并记录到 '+(Join-Path $Directory 'dialogs.jsonl')+'）。这是失败点：若弹窗涉及非本轮生成的 DLL/启动目录，说明软件自动加载了包外内容，改用官方环境变量/参数指向本轮空配置后重启；若是本轮桥接，先 接口探测.ps1 -Check 再按本机程序集重编。record='+$out);exit 7}

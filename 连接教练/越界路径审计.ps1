@@ -7,6 +7,9 @@
 # -AgentLog/-PackageRoots/-SessionDir/-EnvSnapshot: verifier-only (host/tester) replay of a session JSONL.
 # Also FAILS on: persistent env-var / registry writes in commands (setx, SetEnvironmentVariable User/Machine, reg add, Set-ItemProperty HK*),
 # and on any difference against the round's env snapshot (连接教练\环境快照.ps1; user/machine env vars, vendor registry, Run keys).
+# Also FAILS on: executables run directly instead of through 适配器\限时运行.ps1 (& x.exe / Start-Process / cmd /c / Process::Start in a command;
+#   target-software processes alive this round that no 限时运行/启动软件 record accounts for), and on any change to the package's own scripts
+#   (hashes vs artifacts\pkg-baseline.json written by 一键连接 step 2b; agents must not edit 启动软件.ps1 / 连接证据.cs / ... ).
 # Allowed: the running agent's OWN current-session dir (newest .gemini\antigravity-cli\brain\<id>, .grok\sessions\<encoded start dir>); other sessions/memories stay forbidden.
 [CmdletBinding(PositionalBinding=$false)]
 param([string[]]$Paths,[string]$AgentLog,[string[]]$PackageRoots,[string]$LocateFile,[string]$SessionDir,[string]$EnvSnapshot,
@@ -86,33 +89,82 @@ function Check-Text([string]$t){
     if(-not (Test-One $raw)){$c=$raw;$i=$c.IndexOf(' -');if($i -gt 2){$c=$c.Substring(0,$i)};if($c.Length -gt 160){$c=$c.Substring(0,160)};$hits.Add($c)}
   }
 }
+# executables must run through 适配器\限时运行.ps1 (-Exe / -File); shells themselves are fine
+$shellRx='^(?i)(powershell|pwsh|cmd|conhost|wsl|bash)(\.exe)?$'
+function Check-Exe([string]$t,[bool]$isCmd){
+  if(-not $t -or $t -match '限时运行'){return}
+  $rx='(?im)('+$(if($isCmd){'^\s*["'']?|'}else{''})+'&\s*["'']?|\bStart-Process\s+(-FilePath\s+)?["'']?|\bcmd(\.exe)?\s+/[ck]\s+["'']?|Process\]::Start\(\s*["'']?|\bInvoke-Item\s+["'']?)([^"''\r\n;|&<>]*?[^\\/"''\s;|&]+\.exe)\b'
+  foreach($m in [regex]::Matches($t,$rx)){
+    $x=$m.Groups[$m.Groups.Count-1].Value.Trim();$leaf=[IO.Path]::GetFileName($x)
+    if($leaf -match $shellRx){continue}
+    if([IO.Path]::IsPathRooted($x)){$nx=Norm $x;if($nx -and $env:WINDIR -and $nx.StartsWith((Norm $env:WINDIR)+'\',[StringComparison]::OrdinalIgnoreCase)){continue}}
+    else{$gc=Get-Command $leaf -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1;if($gc -and $env:WINDIR -and $gc.Source.StartsWith((Norm $env:WINDIR)+'\',[StringComparison]::OrdinalIgnoreCase)){continue}}
+    $hits.Add('untimed-exe: '+$x+' （直接调用，未经 适配器\限时运行.ps1 -Exe/-File）')
+  }
+}
 function Get-Strings($x){
   if($null -eq $x){return}
   if($x -is [string]){return $x}
   if($x -is [Collections.IEnumerable]){foreach($i in $x){Get-Strings $i};return}
   if($x -is [psobject]){foreach($pp in $x.PSObject.Properties){Get-Strings $pp.Value}}
 }
-foreach($p in @($Paths)){Check-Text $p}
+foreach($p in @($Paths)){Check-Text $p;Check-Exe $p $false}
 if($AgentLog){
   if(-not (Test-Path -LiteralPath $AgentLog -PathType Leaf)){throw 'AGENT_LOG_REQUIRED'}
   foreach($line in [IO.File]::ReadLines($AgentLog,[Text.Encoding]::UTF8)){
     if($line -notmatch '"type"\s*:\s*"tool_call"'){continue}
     try{$o=$line|ConvertFrom-Json}catch{continue}
-    if($o.rawInput){foreach($v in (Get-Strings $o.rawInput)){Check-Text $v}}
+    if($o.rawInput){foreach($v in (Get-Strings $o.rawInput)){Check-Text $v}
+      foreach($pp in @($o.rawInput.PSObject.Properties|Where-Object{$_.Name -match '^(?i)(CommandLine|command|cmd)$'})){Check-Exe ([string]$pp.Value) $true}}
   }
 }
 # env / registry diff against the round's snapshot (taken by 一键连接 step 1, or by the tester)
 $envArgs=@('-Mode','Diff','-Quiet');if($EnvSnapshot){$envArgs+=@('-Snap',$EnvSnapshot)};if($LocateFile){$envArgs+=@('-LocateFile',$LocateFile)}
 $envOut=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '环境快照.ps1') @envArgs
 if($LASTEXITCODE -eq 2){try{$ej=($envOut -join "`n")|ConvertFrom-Json;foreach($c in @($ej.changes)){$hits.Add('env-changed: '+$c)}}catch{$hits.Add('env-changed: (unparsed) '+($envOut -join ' '))}}
+# package self-integrity + untimed target-software launches (needs the round's artifacts)
+function WsOf([string]$p){if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $p}
+$wsA=WsOf $self;$artA=Join-Path $wsA 'artifacts'
+if($AgentLog -and -not (Test-Path -LiteralPath $artA)){foreach($r in @($PackageRoots)){if($r){$c=Get-ChildItem -LiteralPath $r -Recurse -Directory -Filter 'artifacts' -Depth 3 -ErrorAction SilentlyContinue|Where-Object{[IO.File]::Exists((Join-Path $_.FullName 'pkg-baseline.json'))}|Select-Object -First 1;if($c){$artA=$c.FullName;break}}}}
+$baseF=Join-Path $artA 'pkg-baseline.json'
+if([IO.File]::Exists($baseF)){
+  try{$bj=[IO.File]::ReadAllText($baseF,[Text.Encoding]::UTF8)|ConvertFrom-Json
+    foreach($rp in @($bj.roots.PSObject.Properties)){foreach($fp in @($rp.Value.PSObject.Properties)){
+      $full=Join-Path $rp.Name $fp.Name
+      if(-not [IO.File]::Exists($full)){$hits.Add('package-script-removed: '+$full);continue}
+      if((Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash -ne [string]$fp.Value){$hits.Add('package-script-modified: '+$full+' （不得修改本包自带脚本；自己的代码写在 artifacts 或 连接经验\<槽>）')}
+    }}}catch{$hits.Add('package-baseline-unreadable: '+$baseF)}
+}
+try{
+  $roundF=Join-Path $artA 'round.json'
+  $idirs2=@();if($loc){$idirs2=@($loc.install_dirs|Where-Object{$_}|ForEach-Object{Norm ([string]$_)})}
+  if([IO.File]::Exists($roundF) -and $idirs2.Count){
+    $rj=[IO.File]::ReadAllText($roundF,[Text.Encoding]::UTF8)|ConvertFrom-Json
+    $r0=[DateTime]::Parse([string]$rj.started_utc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime()
+    $known=New-Object System.Collections.Generic.HashSet[int]
+    $tr=Join-Path $artA 'timed-runs.jsonl'
+    if([IO.File]::Exists($tr)){foreach($l in [IO.File]::ReadAllLines($tr,[Text.Encoding]::UTF8)){try{$j=$l|ConvertFrom-Json;if($j.pid){[void]$known.Add([int]$j.pid)}}catch{}}}
+    foreach($lj in @(Get-ChildItem -LiteralPath $artA -Filter 'launch.json' -Recurse -File -ErrorAction SilentlyContinue)){try{$j=[IO.File]::ReadAllText($lj.FullName,[Text.Encoding]::UTF8).TrimStart([char]0xFEFF)|ConvertFrom-Json;if($j.pid){[void]$known.Add([int]$j.pid)}}catch{}}
+    $procs=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $byId=@{};foreach($q in $procs){$byId[[int]$q.ProcessId]=$q}
+    foreach($q in $procs){
+      $ep=[string]$q.ExecutablePath;if(-not $ep){continue}
+      $inI=$false;foreach($d in $idirs2){if($ep.StartsWith($d+'\',[StringComparison]::OrdinalIgnoreCase)){$inI=$true;break}};if(-not $inI){continue}
+      if($q.CreationDate -lt $r0){continue}
+      $ok=$false;$x=[int]$q.ProcessId
+      for($i=0;$i -lt 8;$i++){if($known.Contains($x)){$ok=$true;break};if(-not $byId.ContainsKey($x)){break};$x=[int]$byId[$x].ParentProcessId}
+      if(-not $ok){$hits.Add('untimed-launch: pid='+$q.ProcessId+' '+$ep+' （本轮启动的软件进程没有 限时运行/启动软件 记录）')}
+    }
+  }
+}catch{}
 # reminder (not a failure): bridge rebuilt after the target software process started -> the process still runs the old bridge
 $reminders=New-Object System.Collections.Generic.List[string]
 try{
   $ap=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\');$aw=$(if((Split-Path $ap -Leaf) -eq '工作区'){Split-Path $ap -Parent}else{$ap})
   $bf=Join-Path $aw 'artifacts\bridge-builds.jsonl'
   if([IO.File]::Exists($bf)){
-    $lb=[IO.File]::ReadAllLines($bf,[Text.Encoding]::UTF8)|Where-Object{$_}|Select-Object -Last 1|ConvertFrom-Json
-    if([int]$lb.build -gt 1){
+    $lb=[IO.File]::ReadAllLines($bf,[Text.Encoding]::UTF8)|Where-Object{$_}|ForEach-Object{try{$_|ConvertFrom-Json}catch{}}|Where-Object{$_ -and [string]$_.kind -ne 'probe'}|Select-Object -Last 1
+    if($lb -and [int]$lb.build -gt 1){
       $bt=[DateTime]::Parse([string]$lb.utc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
       $lf=$(if($LocateFile){$LocateFile}else{@((Join-Path $aw '本机定位.json'),(Join-Path $ap '本机定位.json'))|Where-Object{[IO.File]::Exists($_)}|Select-Object -First 1})
       $idirs=@();if($lf -and [IO.File]::Exists($lf)){$idirs=@((Get-Content -LiteralPath $lf -Raw -Encoding UTF8|ConvertFrom-Json).install_dirs|Where-Object{$_}|ForEach-Object{[IO.Path]::GetFullPath([string]$_).TrimEnd('\')})}

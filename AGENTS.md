@@ -17,17 +17,27 @@
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录（你的 cwd）>"
    ```
-   它依次完成：**0 落位**（包在 `%TEMP%` 时复制到 `起点目录\ngxz-ya-main`，之后只在那里工作）→ **1 定位软件**（`连接教练\定位软件.ps1`，本轮唯一允许的本机探测，写 `本机定位.json`；退出码 3 = 找不到，报告并停止）→ **2 部署工作区**（`起点目录\ngxz-ya-ws`，路径短）→ **3 连接前查通用卡**（自动记录）→ **4 有本机连接经验就快连**；没有就停在 `NEED_AGENT_METHOD` 并打印后续每一步的现成命令（上网找开源方案、接口探测 `适配器\接口探测.ps1`（只用本机版本真实存在的成员）、弹窗守护 `适配器\弹窗守护.ps1`（错误弹窗静默关闭+记录+有限自愈）、编译桥接 `适配器\编译桥接.ps1`、启动软件 `适配器\启动软件.ps1`、握手登记 `YA插件\ya_link.ps1`、改模验收 `连接软件.ps1 -Action Connect -TaskFile`、存经验 `连接经验.ps1 add`）。**按它的输出继续，不要另起炉灶。** 包内不含任何软件专属连接方法：接口要你上网找合法官方/开源资料。
+   它依次完成（第 1c 步是**开测前环境硬检查**：用户/系统持久环境变量里有旧桥接/启动目录/本包残留——`NGXZ_*`、`YALINK_*`、名字含 STARTUP/USER_DIR/CUSTOM_DIR/PLUGIN/ADDIN 的非空变量，或值指向 ngxz*/artifacts/.dll/起点目录——就退出码 11 停下；**不要自己删**，如实报告用户清理后重跑）：**0 落位**（包在 `%TEMP%` 时复制到 `起点目录\ngxz-ya-main`，之后只在那里工作）→ **1 定位软件**（`连接教练\定位软件.ps1`，本轮唯一允许的本机探测，写 `本机定位.json`；退出码 3 = 找不到，报告并停止）→ **2 部署工作区**（`起点目录\ngxz-ya-ws`，路径短）→ **3 连接前查通用卡**（自动记录）→ **4 有本机连接经验就快连**；没有就停在 `NEED_AGENT_METHOD` 并打印后续每一步的现成命令（上网找开源方案、接口探测 `适配器\接口探测.ps1`（只用本机版本真实存在的成员）、弹窗守护 `适配器\弹窗守护.ps1`（错误弹窗静默关闭+记录+有限自愈）、编译桥接 `适配器\编译桥接.ps1`、启动软件 `适配器\启动软件.ps1`、握手登记 `YA插件\ya_link.ps1`、改模验收 `连接软件.ps1 -Action Connect -TaskFile`、存经验 `连接经验.ps1 add`）。**按它的输出继续，不要另起炉灶。** 包内不含任何软件专属连接方法：接口要你上网找合法官方/开源资料。
 3. **每个大步骤前跑越界审计。** 大步骤 = 部署工作区、写/编译桥接、启动或接入软件、改模、独立读回、接通 YA、报告结果：
    `powershell -NoProfile -ExecutionPolicy Bypass -File 连接教练\越界路径审计.ps1 -Paths <本轮已访问及本步将访问的全部包外绝对路径或命令原文>`
    退出码 2（`OVERREACH_FAIL`）= **本轮失败**：立即停止，不再执行任何后续步骤，向用户如实报告命中路径。
    审计同时对比一键连接第 1b 步拍的**环境快照**（`连接教练\环境快照.ps1`：用户/系统环境变量、目标软件厂商注册表、开机自启项），并拦截命令里的持久写入（`setx`、`SetEnvironmentVariable(...,'User'/'Machine')`、`reg add`、`Set-ItemProperty HKCU:/HKLM:` 等）。报告前再跑一次 `连接教练\环境快照.ps1 -Mode Diff -ScanInstall`，结果写进报告。
-4. **调用软件窗口、YA 和桥接只用现成限时脚本，不要手写嵌套多行 `powershell -Command "..."`**（引号或换行一断，内层会一直等输入，整轮卡死）：
-   - 多行逻辑写成 `artifacts\*.ps1`，用 `适配器\限时运行.ps1 -File <脚本> -TimeoutSec 60 [-ArgLine:"参数原文"]` 运行（标准输入已关，超时结束整棵进程树，退出码 124）。
+4. **所有可执行程序都经 `适配器\限时运行.ps1` 运行**（软件自带命令行工具、软件主程序都算）；不要手写嵌套多行 `powershell -Command "..."`（引号或换行一断，内层会一直等输入，整轮卡死）。直接 `& xxx.exe` / `Start-Process` / `cmd /c xxx.exe` 调用，或本轮起的软件进程没有限时运行/启动软件记录，越界审计都记为违规（`untimed-exe` / `untimed-launch`）：
+   - 命令行程序：`适配器\限时运行.ps1 -Exe <install_dirs 内程序.exe> -TimeoutSec 120 [-ArgLine:"参数原文"]`。
+   - 启动软件 GUI：`适配器\限时运行.ps1 -File 适配器\启动软件.ps1 -TimeoutSec 300 -ArgLine:"-Exe <主程序.exe> -WaitSeconds 240 [-Env 名=值]"`（启动软件.ps1 不经限时运行直接调会拒绝，退出码 9；GUI 脱离进程树启动，超时不会被杀；软件进程的 TEMP/TMP 默认指到本次 launch 目录\tmp，软件写在临时目录的日志就落在 artifacts）。
+   - 多行逻辑写成 `artifacts\*.ps1`，用 `适配器\限时运行.ps1 -File <脚本> -TimeoutSec 60 [-ArgLine:"参数原文"]` 运行（标准输入已关，超时结束整棵进程树，退出码 124）。每次运行记入 `artifacts\timed-runs.jsonl`。
+   - **隔离桌面**：启动软件打印 `NOT_INTERACTIVE_DESKTOP` 时（有的 CLI Agent 把命令跑在看不到用户桌面的沙箱桌面里），窗口相关脚本——`适配器\弹窗守护.ps1`、`连接软件.ps1 -Action Connect/Run/Diagnose`、`YA插件\ya_link.ps1`、`YA插件\show_ya.ps1`——一律用 `适配器\限时运行.ps1 -OnDesktop -File <脚本> -TimeoutSec <秒> -ArgLine:"参数"` 在用户桌面上跑（`YA查询.ps1` 已自动这样做）；否则看不到软件窗口、弹窗和 YA 面板。
    - 查窗口/是否可用：`适配器\YA查询.ps1 -TargetPid <PID>`。
    - 给桥接发命令、等回复、读回：`适配器\调用桥接.ps1 -Pipe ngxz-ya-<32位hex> -TargetPid <PID> -Action <动作> [-BodyFile <请求.json>] -TimeoutSec 30 [-Out <回复.json>]`。超时 = 结果未知，不重发写操作，先用只读动作对账。
 5. **通用卡必须查、必须留证。** 连接前一键连接已自动查卡；**建模/改模前**必须自己运行 `连接教练\查通用卡.ps1 -Stage 建模前 [-Q 本任务关键词]`（`连接软件.ps1 -Action Connect/Run` 也会自动补记一次，但不能代替你读卡和 `-Apply`）（工程图任务另查 `-Q 尺寸编号` 取 `G-MODEL-004`），读全文用 `-Get <编号>`，照做了就 `-Apply <编号> -How "<用在哪一步>"`。记录在 `ngxz-ya-ws\artifacts\card-calls.jsonl`，最终报告引用它；没查就如实写没查。
-6. **首连硬闸：先上网搜开源/官方方案，登记来源。** `NEED_AGENT_METHOD` 后第一件事是上网搜索（官方 API/SDK 文档、GitHub、MCP Registry），读完用 `连接教练\来源闸.ps1 -Add -Url <网址> -Points "要点"` 逐条登记到 `artifacts\sources.json`（≥2 条不同网址）。没登记合格，`适配器\准备接入.ps1` 和 `适配器\编译桥接.ps1` 都拒绝执行（退出码 5 `SOURCES_REQUIRED`）。
+6. **首连硬闸：先上网找开源/官方方案，本会话真实打开，再登记来源。** `NEED_AGENT_METHOD` 后第一件事是上网搜索（官方 API/SDK 文档、GitHub、MCP Registry）。Agent 自带的网页工具若被代理 fake-IP（github.com → 198.18.x.x）当 SSRF 挡住，就用本包取页脚本（走本机 Invoke-WebRequest/curl，已实测可开 github.com、api.github.com、raw.githubusercontent.com）：
+   - 搜仓库：`连接教练\取页.ps1 -GitHubSearch "<软件名> automation api"`；打开：`连接教练\取页.ps1 -Url <仓库或文档网址>`（GitHub 仓库页顺带取 README；缓存+哈希在 `artifacts\page-cache`，读它给的 `.txt` 正文）。
+   - 读完逐条登记：`连接教练\来源闸.ps1 -Add -Url <同一网址> -Points "要点（写页面原词：接口/类名/文件名/加载方式）"`。
+   - 合格 = ≥2 条不同网址；≥1 条是 GitHub 仓库（不是本包）；每条都在本会话（`artifacts\round.json` 之后）由取页脚本打开过、HTTP 2xx、缓存哈希对得上；要点里 ≥2 个英文词真的出现在该页正文。凭印象填、没打开、打开失败的一律不算。没过，`适配器\准备接入.ps1` 和 `适配器\编译桥接.ps1` 都拒绝执行（退出码 5 `SOURCES_REQUIRED`）。
+6b. **最小插件验证硬闸（完整桥接之前）。** 先做一个什么都不干、只写 ready 文件并打印「已加载」的空插件，按来源资料的方式让软件加载，再用软件自身日志确认：
+   - `适配器\最小插件验证.ps1 -Init`（给 ready 文件路径、本轮口令、要放进插件入口的两行代码）→ `适配器\编译桥接.ps1 -Probe -Source <空插件.cs> -Out <工作区>\artifacts\minplugin\<名>.dll -References <官方程序集>` → 按资料写明的加载方式（入口方法、插件/启动目录、启动参数、进程级环境变量）经限时运行+启动软件启动 → `适配器\最小插件验证.ps1 -Verify -TargetPid <PID> [-SoftwareLog <日志>]`。
+   - ready 文件口令对、写它的是目标软件进程、且软件自身日志（launch 目录\tmp 里的软件日志，或 `-SoftwareLog` 指定的工作区/install_dirs 内日志）出现插件名/口令，才 `MINPLUGIN_VERIFIED`。没过，`适配器\编译桥接.ps1`（不带 `-Probe`）拒绝（退出码 8 `MINPLUGIN_REQUIRED`）。
+   - 空插件加载不了就别在完整桥接上反复试：看它打印的日志相关行，对照资料改加载方式；完整桥接沿用空插件已验证的同一加载方式。
 7. **桥接通用要求（任何软件都一样，详见 `适配器\说明.md`「桥接通用要求」）：**
    - 工作文件/活动文档：先查是否已存在 → 已存在就打开；打不开就换唯一文件名（带时间或 request）再新建；绝不对已存在的文件再调「新建」。
    - 拿到活动文档、部件、工作对象后先判空；为空就回错误，不往下执行任何建模动作。
@@ -42,6 +52,8 @@
 - 查找、读取或借用其他项目、历史副本（含同名 `ngxz*` 旧材料）、旧桥接/启动目录，或软件自定义目录中非本包本轮生成的文件。即使瞥见也一律忽略。
 - **持久修改系统环境**：`setx`、`[Environment]::SetEnvironmentVariable(…,'User'/'Machine')`、写注册表、改 `install_dirs` 里任何文件（含软件自带配置）。软件需要的环境变量只能进程级传：`适配器\启动软件.ps1 -Env 名=值`。
 - 在本包、起点目录和 `install_dirs` 之外做任何递归扫描（`Get-ChildItem -Recurse`、`dir /s`、`where /r`、遍历 `Get-PSDrive` 等）。
+- **修改本包自带的脚本**（`适配器\*.ps1`、`YA插件\*.cs / *.ps1`、`连接教练\*.ps1`、`一键连接.ps1` 等，包括启动软件.ps1、连接证据.cs）。自己的代码只写在 `artifacts` 或 `连接教练\连接经验\<槽>\`。一键连接第 2b 步记下包脚本哈希（`artifacts\pkg-baseline.json`），越界审计逐个核对，改了 = 本轮失败。包脚本不适用就如实报告，不要就地改。
+- 绕过 `适配器\限时运行.ps1` 直接运行可执行程序（见第 4 条）。
 
 允许：本包与起点目录内的读写；`install_dirs` 内的只读核对（版本、可执行文件、官方/开源接口）；按 PID 查看目标软件进程与窗口；本包脚本管理的 `%LOCALAPPDATA%\YALink`、`%LOCALAPPDATA%\YAHud` 状态；公开网页查资料。
 
