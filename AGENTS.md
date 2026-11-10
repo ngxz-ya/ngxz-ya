@@ -21,14 +21,20 @@
 3. **每个大步骤前跑越界审计。** 大步骤 = 部署工作区、写/编译桥接、启动或接入软件、改模、独立读回、接通 YA、报告结果：
    `powershell -NoProfile -ExecutionPolicy Bypass -File 连接教练\越界路径审计.ps1 -Paths <本轮已访问及本步将访问的全部包外绝对路径或命令原文>`
    退出码 2（`OVERREACH_FAIL`）= **本轮失败**：立即停止，不再执行任何后续步骤，向用户如实报告命中路径。
-4. **通用卡必须查、必须留证。** 连接前一键连接已自动查卡；**建模/改模前**必须运行 `连接教练\查通用卡.ps1 -Stage 建模前`（工程图任务另查 `-Q 尺寸编号` 取 `G-MODEL-004`），读全文用 `-Get <编号>`，照做了就 `-Apply <编号> -How "<用在哪一步>"`。记录在 `ngxz-ya-ws\artifacts\card-calls.jsonl`，最终报告引用它；没查就如实写没查。
-5. 之后按下文「接入方式」「完成标准」执行。
+   审计同时对比一键连接第 1b 步拍的**环境快照**（`连接教练\环境快照.ps1`：用户/系统环境变量、目标软件厂商注册表、开机自启项），并拦截命令里的持久写入（`setx`、`SetEnvironmentVariable(...,'User'/'Machine')`、`reg add`、`Set-ItemProperty HKCU:/HKLM:` 等）。报告前再跑一次 `连接教练\环境快照.ps1 -Mode Diff -ScanInstall`，结果写进报告。
+4. **调用软件窗口、YA 和桥接只用现成限时脚本，不要手写嵌套多行 `powershell -Command "..."`**（引号或换行一断，内层会一直等输入，整轮卡死）：
+   - 多行逻辑写成 `artifacts\*.ps1`，用 `适配器\限时运行.ps1 -File <脚本> -TimeoutSec 60 [-ArgLine:"参数原文"]` 运行（标准输入已关，超时结束整棵进程树，退出码 124）。
+   - 查窗口/是否可用：`适配器\YA查询.ps1 -TargetPid <PID>`。
+   - 给桥接发命令、等回复、读回：`适配器\调用桥接.ps1 -Pipe ngxz-ya-<32位hex> -TargetPid <PID> -Action <动作> [-BodyFile <请求.json>] -TimeoutSec 30 [-Out <回复.json>]`。超时 = 结果未知，不重发写操作，先用只读动作对账。
+5. **通用卡必须查、必须留证。** 连接前一键连接已自动查卡；**建模/改模前**必须自己运行 `连接教练\查通用卡.ps1 -Stage 建模前 [-Q 本任务关键词]`（`连接软件.ps1 -Action Connect/Run` 也会自动补记一次，但不能代替你读卡和 `-Apply`）（工程图任务另查 `-Q 尺寸编号` 取 `G-MODEL-004`），读全文用 `-Get <编号>`，照做了就 `-Apply <编号> -How "<用在哪一步>"`。记录在 `ngxz-ya-ws\artifacts\card-calls.jsonl`，最终报告引用它；没查就如实写没查。
+6. 之后按下文「接入方式」「完成标准」执行。
 ### 禁止清单（任何一条发生即本轮失败）
 
 - 列举或读取用户主目录（`%USERPROFILE%`、`$HOME`、`~`）、桌面（起点文件夹本身除外）、文档、下载、图片等用户文件夹。
 - 列举任何盘符根（如 `C:\`、`D:\`、`E:\`）或 `Program Files` 根；查软件只用第 2 步的定位脚本。
-- 读取 `.gitconfig`、凭据、浏览器或 Agent 缓存、其他会话日志。
+- 读取 `.gitconfig`、凭据、浏览器或 Agent 缓存、其他会话日志与记忆。（例外：Agent 读取**自己本次会话**的目录，如 `.gemini\antigravity-cli\brain\<本会话>`、`.grok\sessions\<本起点目录>`，允许。）
 - 查找、读取或借用其他项目、历史副本（含同名 `ngxz*` 旧材料）、旧桥接/启动目录，或软件自定义目录中非本包本轮生成的文件。即使瞥见也一律忽略。
+- **持久修改系统环境**：`setx`、`[Environment]::SetEnvironmentVariable(…,'User'/'Machine')`、写注册表、改 `install_dirs` 里任何文件（含软件自带配置）。软件需要的环境变量只能进程级传：`适配器\启动软件.ps1 -Env 名=值`。
 - 在本包、起点目录和 `install_dirs` 之外做任何递归扫描（`Get-ChildItem -Recurse`、`dir /s`、`where /r`、遍历 `Get-PSDrive` 等）。
 
 允许：本包与起点目录内的读写；`install_dirs` 内的只读核对（版本、可执行文件、官方/开源接口）；按 PID 查看目标软件进程与窗口；本包脚本管理的 `%LOCALAPPDATA%\YALink`、`%LOCALAPPDATA%\YAHud` 状态；公开网页查资料。

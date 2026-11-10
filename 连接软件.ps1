@@ -11,7 +11,11 @@ try{
   @{status='CONNECT_TASK_REQUIRED';connected=$false;live_link=$false;next='先用 -Action Check 检查环境，前台通道登记后用 Connect -TaskFile 本次任务.json 验收'}|ConvertTo-Json
   exit 1
  }
- . (Join-Path $pkg 'YA插件\连接上下文.ps1')
+ # 建模前查通用卡（自动留证到 artifacts\card-calls.jsonl；Agent 自己也应先查并 -Apply 用到的卡）
+ if($Action -in @('Connect','Run') -and $TaskFile -and (Test-Path -LiteralPath (Join-Path $pkg '连接教练\查通用卡.ps1'))){
+  try{$ca=@('-Stage','建模前');try{$tj=Get-Content -LiteralPath $TaskFile -Raw -Encoding UTF8|ConvertFrom-Json;$kw=@($tj.keywords|Where-Object{$_});if($kw.Count){$ca+=@('-Q',(($kw|Select-Object -First 5) -join ','))}}catch{}
+   & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg '连接教练\查通用卡.ps1') @ca|Out-Null}catch{}
+ } . (Join-Path $pkg 'YA插件\连接上下文.ps1')
  . (Join-Path $pkg 'YA插件\真实记录.ps1')
  Assert-YaIsolatedPackage $pkg
  $operation=Join-Path (Get-YaPackageHudHome $pkg) 'operation.json'

@@ -28,7 +28,7 @@ if($Get){
   }
   Write-Output ('CARD_LOG: '+$Log);exit 0
 }
-if(-not $Q){$Q=$default[$Stage];if(-not $Q){$Q=@($Stage)}}
+$Q=@($Q|ForEach-Object{$_ -split ','}|Where-Object{$_});if(-not $Q){$Q=$default[$Stage];if(-not $Q){$Q=@($Stage)}}
 $all=New-Object System.Collections.Generic.List[object]
 foreach($term in @($Q|ForEach-Object{$_ -split ','}|Where-Object{$_})){
   $raw=& powershell -NoProfile -ExecutionPolicy Bypass -File $qs skill_search ("q="+$term) max=5|Out-String

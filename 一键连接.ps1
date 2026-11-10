@@ -29,6 +29,9 @@ if($c -eq 3){Say 'STOP 1 定位：没找到目标软件。按规则报告并停�
 if($c -ne 0){Say ('STOP 1 定位失败 exit='+$c);exit $c}
 $loc=Get-Content -LiteralPath (Join-Path $me '本机定位.json') -Raw -Encoding UTF8|ConvertFrom-Json
 Say ('1 定位：install_dirs = '+(@($loc.install_dirs) -join ' ; '))
+# 1b 环境快照（之后越界审计每次自动对比：用户/系统环境变量、厂商注册表、自启项；有改动=本轮失败）
+$snapF=Join-Path $me '环境快照.json'
+if([IO.File]::Exists($snapF)){Say ('1b 环境快照：沿用本轮已有 '+$snapF)}else{& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $me '连接教练\环境快照.ps1') -Mode Snapshot -Out $snapF -LocateFile (Join-Path $me '本机定位.json')|ForEach-Object{Say ('1b '+$_)}}
 # 2 部署
 $start=Split-Path $me -Parent
 $desk=[IO.Path]::GetFullPath([Environment]::GetFolderPath('DesktopDirectory')).TrimEnd('\')
@@ -42,6 +45,7 @@ $wl=$out|Where-Object{$_ -match '^workspace: '}|Select-Object -Last 1
 if(-not $wl){Say ('STOP 2 部署失败 exit='+$dc+'（保留现场，报告上面原文）');exit 2}
 $rt=$wl.Substring(11).Trim();$ws=Split-Path $rt -Parent
 if([IO.File]::Exists($src)){[IO.File]::Copy($src,(Join-Path $ws '下载来源.json'),$true)}
+if([IO.File]::Exists($snapF)){[void][IO.Directory]::CreateDirectory((Join-Path $ws 'artifacts'));[IO.File]::Copy($snapF,(Join-Path $ws 'artifacts\env-snapshot.json'),$true)}
 Say ('2 部署：工作区 = '+$rt+'（Check exit='+$dc+'，FRONTEND_ADAPTER_MISSING 等在首连时属正常）')
 # 3 连接前查通用卡
 $cl=Join-Path $ws 'artifacts\card-calls.jsonl'
@@ -81,8 +85,11 @@ Write-Output '  d) 启动软件（脱离 Agent 作业、可带只作用于本次
 Write-Output '     启动软件.ps1 自带弹窗守护：错误弹窗会被静默关闭并记录（退出码 7 = 失败点）；改模期间可另开 .\适配器\弹窗守护.ps1 -TargetPid <PID> -Seconds 600 -Dismiss -RetryScript <你的重建+重启脚本> -MaxRetries 2 做有限次自愈，到上限如实报告。'
 Write-Output '     软件若自动加载包外自定义/插件目录：用官方文档的环境变量/参数指向 artifacts 内空配置，不读取不加载那些目录。'
 Write-Output ('  e) 握手登记：.\YA插件\ya_link.ps1 soft='+$Software+' slot='+$Slot+' pid=<GUI PID> prepare=1 → 由软件内桥接写 readback → 去掉 prepare=1 再跑一次登记')
-Write-Output '  f) 建模前查卡：.\连接教练\查通用卡.ps1 -Stage 建模前；读全文 -Get <编号>；照做后 -Apply <编号> -How "..."'
+Write-Output '  f) 建模前查卡（必做，留证）：.\连接教练\查通用卡.ps1 -Stage 建模前 [-Q 关键词]；读全文 -Get <编号>；照做后 -Apply <编号> -How "..."。连接软件.ps1 Connect/Run 也会自动补记一次 建模前 查卡。'
 Write-Output ('  g) 改模+独立读回验收：.\连接软件.ps1 -Software "'+$Software+'" -Action Connect -TaskFile <任务.json>（见 适配器\说明.md）')
 Write-Output ('  h) 通过后立即存经验：写 连接卡 + 连接教练\连接经验\'+$Slot+'\快通道.ps1，再 .\连接教练\连接经验\连接经验.ps1 add slot='+$Slot+' file=<卡.json>；下次 一键连接 会直接快连。')
+Write-Output '  调用规则（防卡死）：不要手写嵌套多行 powershell -Command "..."。多行逻辑写成 artifacts\*.ps1，用 .\适配器\限时运行.ps1 -File <脚本> -TimeoutSec 60 [-ArgLine:"参数"] 跑；'
+Write-Output '     查软件窗口/YA：.\适配器\YA查询.ps1 -TargetPid <PID>；给桥接发命令/读回：.\适配器\调用桥接.ps1 -Pipe <ngxz-ya-32hex> -TargetPid <PID> -Action <动作> [-BodyFile <json>] -TimeoutSec 30。都自带超时。'
+Write-Output '  环境规则：只许进程级环境变量（启动软件.ps1 -Env 名=值）。禁止 setx、SetEnvironmentVariable(…User/Machine)、写注册表、改 install_dirs 里的任何文件；越界审计会对比 1b 环境快照，有改动即本轮失败。'
 Write-Output '  只有 Connect 返回 CONNECTED_INTERACTIVE 才算连上；任何一步失败如实报告，不把部分完成报成成功。'
 exit 20
