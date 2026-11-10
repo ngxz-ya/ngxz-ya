@@ -32,15 +32,13 @@ catch{
   Write-Output ('BREAKAWAY_DENIED: '+$_.Exception.Message+' -> fallback WMI Win32_Process.Create')
   function Q([string]$s){if($s -match '[\s"]'){'"'+$s.Replace('"','\"')+'"'}else{$s}}
   $line=(@(Q $exeFull)+@($Arguments|ForEach-Object{Q $_})) -join ' '
-  if($set.Count){$line='cmd.exe /d /c '+((@($set.Keys|ForEach-Object{'set "'+$_+'='+$set[$_]+'"'})+@($line)) -join '&& ')}
-  $r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=$line;CurrentDirectory=$Directory}
+  # ShowWindow=1 (SW_SHOWNORMAL): WMI default start info hides GUI main windows (R7: NX ran with only hidden windows).
+  # Env passed as the full current process environment (already includes -Env overrides); no cmd.exe wrapper.
+  $envList=@([Environment]::GetEnvironmentVariables('Process').GetEnumerator()|Where-Object{$_.Key -notmatch '^='}|ForEach-Object{$_.Key+'='+$_.Value})
+  $si=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]1;EnvironmentVariables=[string[]]$envList}
+  $r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=$line;CurrentDirectory=$Directory;ProcessStartupInformation=$si}
   if($r.ReturnValue -ne 0){Write-Output ('WMI_START_FAILED code='+$r.ReturnValue);exit 6}
-  $id=[int]$r.ProcessId;$via='WMI'
-  if($set.Count){
-    $name=[IO.Path]::GetFileName($exeFull);$kid=$null
-    for($i=0;$i -lt 30 -and -not $kid;$i++){Start-Sleep -Milliseconds 500;$kid=Get-CimInstance Win32_Process -Filter ("ParentProcessId="+$id+" AND Name='"+$name+"'")|Select-Object -First 1}
-    if($kid){$id=[int]$kid.ProcessId}
-  }
+  $id=[int]$r.ProcessId;$via='WMI(ShowWindow=1)'
 }
 Write-Output ('LAUNCHED pid='+$id+' via='+$via+' exe='+$exeFull)
 $title='';$hwnd=0;$exited=$null;$dialogs=@()
