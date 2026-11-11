@@ -45,7 +45,11 @@ if ($doc.source_kind -cne 'runtime_measured') { throw 'source_kind' }
 if ([int]$doc.input_tokens -ne 10 -or [int]$doc.output_tokens -ne 5 -or [int]$doc.total_tokens -ne 35) { throw ('Grok totals wrong: ' + ($doc | ConvertTo-Json -Compress)) }
 if ([int]$doc.cache_read_tokens -ne 20 -or [int]$doc.reasoning_tokens -ne 3) { throw 'Grok detail tokens' }
 if ([int]$doc.total_tokens -eq 999) { throw 'step usage was incorrectly accumulated' }
-$pass.Add('PASS: Grok type=end import (Auto detect, no step accumulation, cache in total)')
+$linkLog = Join-Path (Get-YaPackageHudHome $pkg) 'io\link.log'
+if (-not (Test-Path -LiteralPath $linkLog)) { throw 'link.log not written' }
+$ll = Get-Content -LiteralPath $linkLog -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([int]$ll.total_tokens -ne 35 -or [int]$ll.input_tokens -ne 10 -or [string]$ll.session -cne $sid) { throw ('link.log numbers wrong: ' + ($ll | ConvertTo-Json -Compress)) }
+$pass.Add('PASS: Grok type=end import (Auto detect, no step accumulation, cache in total, link.log written)')
 
 # e: HasColdFastpathVerification / HasFirstConnectComplete
 $io = Join-Path (Get-YaPackageHudHome $pkg) 'io'

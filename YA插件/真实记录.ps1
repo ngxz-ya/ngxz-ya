@@ -219,6 +219,7 @@ function Import-YaRuntimeUsage([string]$Package, [string]$Log, [string]$Session,
     $old = $null
     if (Test-Path -LiteralPath $path) { $old = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json }
     $base = $numbers.total_tokens; $baseIn=$numbers.input_tokens; $baseOut=$numbers.output_tokens
+    if ((-not $old -or $old.session -cne $Session) -and ($Format -eq 'Grok' -or $Format -eq 'Antigravity')) { $base=0; $baseIn=0; $baseOut=0 }
     if ($old -and $old.session -ceq $Session) {
       if ($old.provider -cne $provider -or ($old.source_format -and $old.source_format -cne $Format)) { throw '用量来源变化，拒绝混合累计' }
       if ($numbers.input_tokens -lt $old.input_tokens -or $numbers.output_tokens -lt $old.output_tokens -or $numbers.total_tokens -lt $old.total_tokens) { throw '累计用量倒退，拒绝合并' }
@@ -236,6 +237,10 @@ function Import-YaRuntimeUsage([string]$Package, [string]$Log, [string]$Session,
       $doc['source_time_kind']='export_file_mtime';$doc['cache_read_tokens']=$cacheRead; $doc['cache_creation_tokens']=$cacheCreate; $doc['reasoning_tokens']=$reasoning
     }
     Write-YaAtomic $path $doc
+    $linkLog = Join-Path $actualHome 'io\link.log'
+    $sum = [ordered]@{input_tokens=$doc.input_tokens; output_tokens=$doc.output_tokens; total_tokens=$doc.total_tokens; session=$doc.session; source=[string]$doc.source; source_format=$Format; collected_utc=[string]$doc.collected_utc}
+    foreach ($k in @('cache_read_tokens','cache_creation_tokens','reasoning_tokens','thinking_tokens')) { if ($doc.Contains($k)) { $sum[$k]=$doc[$k] } }
+    Write-YaAtomic $linkLog $sum
     if (-not $old -or $old.session -cne $Session -or $old.task -cne $Task -or $old.total_tokens -ne $numbers.total_tokens) { Add-YaActualEvent $Package 'usage_snapshot' $doc }
     return $doc
   } finally { if ($held) { $mutex.ReleaseMutex() }; $mutex.Dispose() }

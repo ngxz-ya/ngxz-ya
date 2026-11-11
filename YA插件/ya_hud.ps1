@@ -752,7 +752,7 @@ public class YaCard : Window {
 
     if (!string.IsNullOrEmpty(title))
 
-      wrap.Children.Add(new TextBlock { Text = title, FontSize = 11, Foreground = new SolidColorBrush(Sub), Margin = new Thickness(0, 0, 0, 4) });
+      wrap.Children.Add(new TextBlock { Text = title, FontSize = 11, Foreground = new SolidColorBrush(Sub), Margin = new Thickness(0, 0, 0, 4), TextWrapping = TextWrapping.Wrap });
 
     var track = new Border { Width = 260, Height = 10, Background = new SolidColorBrush(Color.FromRgb(0xEE, 0xF0, 0xF3)), CornerRadius = new CornerRadius(5), ClipToBounds = true, HorizontalAlignment = HorizontalAlignment.Left };
 
@@ -1021,7 +1021,7 @@ public class YaCard : Window {
           string fn = System.IO.Path.GetFileName(log);
           bool isOldDraw = fn.StartsWith("ya_draw_", StringComparison.OrdinalIgnoreCase) && fn.EndsWith(".log", StringComparison.OrdinalIgnoreCase);
           if (!linkAlive) log = "";
-          else if (apCheck > 0 && !agentAlive) log = "";
+          else if (isOldDraw && apCheck > 0 && !agentAlive) log = "";
           else if (isOldDraw && !File.Exists(log)) log = "";
           else if (isOldDraw && File.Exists(log) && !agentAlive && (DateTime.UtcNow - File.GetLastWriteTimeUtc(log)).TotalMinutes > 30) log = "";
         } catch { log = ""; }
@@ -1421,7 +1421,7 @@ public class YaCard : Window {
     return System.Text.RegularExpressions.Regex.IsMatch(slot,"^[a-z][a-z0-9_-]{0,31}$") && slot!="generic" && slot!="all" ? slot : "";
   }
   int CommonCount() { return IndexEntries(System.IO.Path.Combine(libDir,"槽","generic")).Count+IndexEntries(System.IO.Path.Combine(libDir,"通用技能库")).Count; }
-  int SoftwareCount(string slot) { return slot=="" ? 0 : IndexEntries(System.IO.Path.Combine(libDir,"槽",slot)).Count; }
+  int SoftwareCount(string slot) { if(slot==""||slot=="generic"||slot=="all") slot=linkSlot; if(slot==""||slot=="generic"||slot=="all") return 0; return IndexEntries(System.IO.Path.Combine(libDir,"槽",slot)).Count; }
   List<Dictionary<string,object>> ActualEvents() {
     var result=new List<Dictionary<string,object>>();
     string dir=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(ioDir),"events");
@@ -1501,19 +1501,27 @@ public class YaCard : Window {
     var rows=new List<Dictionary<string,object>>();var dirs=new HashSet<string>();dirs.Add(System.IO.Path.Combine(libDir,"槽","generic"));
     var slots=ReadJson(System.IO.Path.Combine(libDir,"槽位.json"));var all=Has(slots,"slots") ? JArr(slots["slots"]) : null;
     if(all!=null)foreach(var item in all){string id=Str(item as Dictionary<string,object>,"id");if(id!="all" && System.Text.RegularExpressions.Regex.IsMatch(id,"^[a-z][a-z0-9_-]{0,31}$"))dirs.Add(System.IO.Path.Combine(libDir,"槽",id));}
+    try { string slotsRoot=System.IO.Path.Combine(libDir,"槽"); if(Directory.Exists(slotsRoot)) foreach(string d in Directory.GetDirectories(slotsRoot)) { string id=System.IO.Path.GetFileName(d).ToLowerInvariant(); if(id!="all" && System.Text.RegularExpressions.Regex.IsMatch(id,"^[a-z][a-z0-9_-]{0,31}$")) dirs.Add(d); } } catch { }
     dirs.Add(System.IO.Path.Combine(libDir,"通用技能库"));
     foreach(string dir in dirs)foreach(var row in IndexEntries(dir)){row["_library_dir"]=dir;rows.Add(row);}return rows;
   }
   void InventoryBars(List<Dictionary<string,object>> rows) {
-    if(rows.Count==0)return;double moves=0,pits=0,plans=0,other=0,verified=0;
-    foreach(var row in rows){string category=Str(row,"c");if(category=="招式")moves++;else if(category=="坑")pits++;else if(category=="零件方案")plans++;else other++;
-      try{string dir=Str(row,"_library_dir"),file=System.IO.Path.GetFullPath(System.IO.Path.Combine(dir,Str(row,"f")));if(file.StartsWith(dir+System.IO.Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)&&file.EndsWith(".json",StringComparison.OrdinalIgnoreCase)){var record=ReadJson(file);if(JFlag(record,"independently_verified")&&Str(record,"lifecycle")!="withdrawn")verified++;}}catch{}
+    if(rows.Count==0)return;double moves=0,pits=0,plans=0,other=0,verified=0,candidates=0;
+    var formal=new List<Dictionary<string,object>>();
+    foreach(var row in rows){
+      string lib=Str(row,"_library_dir");
+      if(lib.IndexOf("通用技能库",StringComparison.OrdinalIgnoreCase)>=0){candidates++;continue;}
+      formal.Add(row);
+      string category=Str(row,"c");if(category=="招式")moves++;else if(category=="坑")pits++;else if(category=="零件方案")plans++;else other++;
+      try{string dir=lib,file=System.IO.Path.GetFullPath(System.IO.Path.Combine(dir,Str(row,"f")));if(file.StartsWith(dir+System.IO.Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)&&file.EndsWith(".json",StringComparison.OrdinalIgnoreCase)){var record=ReadJson(file);if(JFlag(record,"independently_verified")&&Str(record,"lifecycle")!="withdrawn")verified++;}}catch{}
     }
-    double width=260,total=rows.Count;
-    BarBlock("分类","招式 "+moves+" · 坑 "+pits+" · 方案 "+plans+" · 候选/其他 "+other,
+    double width=260,total=Math.Max(1,formal.Count);
+    BarBlock("分类  招式 "+moves+" · 坑 "+pits+" · 方案 "+plans+" · 其他 "+other+(candidates>0 ? "；候选知识 "+candidates : ""),
+      "槽内已登记条目的分类。候选知识不计入本条形，避免把少量专属经验挤成空条。",
       Seg(width*moves/total,C2),Seg(width*pits/total,Warn),Seg(width*plans/total,Ok),Seg(width*other/total,Idle));
-    BarBlock("核验记录","有独立核验记录 "+verified+" · 待核验/已停用 "+(total-verified)+"。记录状态不替代本次工程验收。",
-      Seg(width*verified/total,Ok),Seg(width*(total-verified)/total,Idle));
+    BarBlock("核验记录  有独立核验 "+verified+" · 待核验/已停用 "+(formal.Count-verified),
+      "仅统计槽内已登记条目。记录状态不替代本次工程验收。",
+      Seg(width*verified/total,Ok),Seg(width*Math.Max(0,formal.Count-verified)/total,Idle));
   }
   void CurrentTokenBar() {
     var usage=ReadJson(System.IO.Path.Combine(ioDir,"actual_usage.json"));
@@ -1532,11 +1540,13 @@ public class YaCard : Window {
       if(VerifiedEvent(e)){tasks.Add(Str(d,"task"));seconds+=Num(d,"elapsed_ms")/1000;if(Str(d,"reused_experience")!="")reused++;}}
     var sessions=UsageSessions();var reset=ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"));var bases=Has(reset,"sessions") ? reset["sessions"] as Dictionary<string,object> : null;double tokens=0;
     foreach(var session in sessions){double baseline=bases!=null && bases.ContainsKey(session.Key) ? Convert.ToDouble(bases[session.Key],IC) : 0;tokens+=Math.Max(0,Convert.ToDouble(session.Value,IC)-baseline);}
-    Sec("本次");Row("TOKEN",vTokn.Text+(uTokn.Text!="" ? " "+uTokn.Text : ""));Row("用时",vTime.Text+uTime.Text);Row("新收",vLib.Text+" 条");Row("成功复用",SuccessfulCurrentReuses()+" 次");
-    CurrentTokenBar();
+    var current=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));
+    bool hasTask=current!=null && Str(current,"id")!="";
+    Sec("本次");Row("TOKEN",hasTask ? (vTokn.Text+(uTokn.Text!="" ? " "+uTokn.Text : "")) : "未统计");Row("用时",hasTask ? (vTime.Text+uTime.Text) : "未统计");Row("新收",hasTask ? vLib.Text+" 条" : "0 条");Row("成功复用",hasTask ? SuccessfulCurrentReuses()+" 次" : "0 次");
+    if(hasTask) CurrentTokenBar();
     Sec("经验库");var inventory=InventoryRows();Row("总条数",inventory.Count+" 条");InventoryBars(inventory);
-    Sec("本次任务");var current=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));Row("状态",current==null ? "未开任务" : Str(current,"status"));Row("调用",vUse.Text+" 次");
-    Sec(reset==null ? "本工作区累计" : "本工作区累计（重置后）");Row("调用",calls+" 次");Row("总 TOKEN",sessions.Count>0 ? Big(tokens) : "未统计");Row("核验任务",tasks.Count+" 次");Row("成功复用",reused+" 次");Row("软件用时",DurText(seconds));
+    Sec("本次任务");Row("状态",hasTask ? Str(current,"status") : "未开任务");Row("调用",hasTask ? vUse.Text+" 次" : "0 次");
+    Sec(reset==null ? "本工作区累计" : "本工作区累计（重置后）");Row("调用",(calls+CountCardCalls())+" 次");Row("总 TOKEN",sessions.Count>0 ? Big(tokens) : "未统计");Row("核验任务",tasks.Count+" 次");Row("成功复用",reused+" 次");Row("软件用时",DurText(seconds));
     totBody.Children.Add(new TextBlock{Text="悬停条形看明细 · 来自本工作区记录",FontSize=10.5,Foreground=new SolidColorBrush(Sub),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,8,0,0)});
   }
   int SuccessfulCurrentReuses(){int count=0;string task=Str(CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json"))),"id");foreach(var e in ActualEvents()){var d=Has(e,"data") ? e["data"] as Dictionary<string,object> : null;if(AfterDisplayReset(e)&&VerifiedEvent(e)&&Str(d,"task")==task&&Str(d,"reused_experience")!="")count++;}return count;}
@@ -1572,14 +1582,16 @@ public class YaCard : Window {
     DateTime collected;
     if (known && (!DateTime.TryParse(Str(d, "collected_utc"), IC, System.Globalization.DateTimeStyles.RoundtripKind, out collected) || collected.ToUniversalTime() < hudBorn))
       known = false;
-    vTokn.Text = known ? Big(Num(d, "task_tokens")) : "未统计";
-    uTokn.Text = known ? "tok" : "";vTokn.FontSize=known ? 24 : 18;
+    var curTask=CurrentTask(ReadJson(System.IO.Path.Combine(libDir,"流程.json")));
+    bool showThis=curTask!=null && Str(curTask,"id")!="";
+    vTokn.Text = (known && showThis) ? Big(Num(d, "task_tokens")) : "未统计";
+    uTokn.Text = (known && showThis) ? "tok" : "";vTokn.FontSize=(known && showThis) ? 24 : 18;
     vTok.Text = "待对照"; uTok.Text = "Token 节省";
-    tTokn.ToolTip = known ? "运行环境实测 · " + Str(d,"model") + "\n会话累计 " + Num(d,"total_tokens") + "\n来源时间 " + Str(d,"source_time") + "\n点击查看来源与任务" : "未接入真实用量源；不使用估算";
+    tTokn.ToolTip = known ? "运行环境实测 · " + Str(d,"model") + "\n会话累计 " + Num(d,"total_tokens") + (showThis ? "" : "\n未开任务，不计入本次") + "\n来源时间 " + Str(d,"source_time") + "\n点击查看来源与任务" : "未接入真实用量源；不使用估算";
     var reset=ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"));
-    double baseline=known && Str(reset,"session")==Str(d,"session") && Str(reset,"task")==Str(d,"task") ? Num(reset,"task_tokens") : 0;
-    shownTok = known ? Math.Max(0,Num(d,"task_tokens")-baseline) : 0;
-    if(known) vTokn.Text=Big(shownTok);
+    double baseline=known && showThis && Str(reset,"session")==Str(d,"session") && Str(reset,"task")==Str(d,"task") ? Num(reset,"task_tokens") : 0;
+    shownTok = (known && showThis) ? Math.Max(0,Num(d,"task_tokens")-baseline) : 0;
+    if(known && showThis) vTokn.Text=Big(shownTok);
   }
   string ActualDetails() {
     var b = new StringBuilder("真实事件记录（命中/调取不等于复用成功）\nToken 节省：待对照\n\n");
