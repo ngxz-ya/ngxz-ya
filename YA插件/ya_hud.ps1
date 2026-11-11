@@ -2,7 +2,7 @@
 # 连接态只看 io\link.json（由同目录 ya_link.ps1 soft=软件名 pid=软件主窗口进程号 写入）：
 #   两段（2026-11-10，2026-11-10 晚补）：握手读回+登记通过即显示「已连接 · 软件」；轻读回不算首连完成。关闭软件后用已存连接卡从零跑快通道通过（卡标 v=1）后，才显示「已验收 · 软件」。
 #   本窗口不探测、不附着、不修改任何机械软件，只读文件。
-# TOKEN：读 Agent 的 stdout 日志（Grok type=end / Codex / Antigravity），路径来自 link.json 的 log 或 YALINK_USAGE_LOG；指针有效时面板自动接入采集真实用量.ps1，写入 io\actual_usage.json（source_kind=runtime_measured）。没有有效用量显示「未统计」。新会话不沿用上一任务的用量文案。
+# TOKEN：读 Agent 的 stdout 日志（Grok type=end / Codex / Antigravity），路径来自 link.json 的 log 或 YALINK_USAGE_LOG；指针有效时面板自动接入采集真实用量.ps1，写入 io\actual_usage.json（source_kind=runtime_measured）。没有有效用量指针时显示「未统计」并写明原因（link.json 的 log 为空或文件不存在；不会为了填数去枚举用户目录，也不编造 TOKEN）。新会话不沿用上一任务的用量文案。
 # 经验调用（2026-11-05 分列，2026-11-10 补）：消耗.json generic 槽 calls + artifacts\card-calls.jsonl（skill_search/skill_get/apply，含连接前）= 通用；当前已连软件槽 calls + 连接卡命中(io\card_hits.json) = 软件。数字旁写「次 · 通用x·软件y」。查通用卡计入「经验 已调用」，不要求软件已连接。
 # 经验库/新收：通用 = 经验库\槽\generic（索引+草稿）+ 经验库\通用技能库\索引.json；软件 = 经验库\槽\<当前已连软件槽>。写「通用x·软件y」，未连软件时软件侧「—」。连接没核对过（登记还在，但进程不在、未响应、窗口不可见、没有 pid、进程号读不了、state 不是 ok、槽号是 generic/all 或本包没有这个槽目录）时软件侧同样是「—」，不把残留 slot 算进去。槽号只是大小写不同，按小写槽计入。连接卡 hits 只进「软件调用」，不进任何库条数。
 # 状态与计数放在 %LOCALAPPDATA%\YAHud（或 YALINK_HUD_HOME），不放经验库。经验库默认是本文件夹上一级的 经验库\。
@@ -1393,9 +1393,24 @@ public class YaCard : Window {
       File.WriteAllText(System.IO.Path.Combine(ioDir,"hud_session.json"),js.Serialize(d),new UTF8Encoding(false));
     } catch { }
   }
+  void WriteUsageStatus(string reason, string log) {
+    try {
+      var d=new Dictionary<string,object>();
+      d["schema"]=1; d["ok"]=reason=="ok"; d["reason"]=reason; d["log"]=log??""; d["utc"]=DateTime.UtcNow.ToString("o");
+      File.WriteAllText(System.IO.Path.Combine(ioDir,"usage_status.json"),js.Serialize(d),new UTF8Encoding(false));
+    } catch { }
+  }
+  string UsageMissingReason() {
+    var st=ReadJson(System.IO.Path.Combine(ioDir,"usage_status.json"));
+    string r=Str(st,"reason");
+    return r==""||r=="ok" ? "未接入真实用量源；不使用估算，也不编造 TOKEN" : r;
+  }
   void TrySyncUsage(string log) {
     try {
-      if(string.IsNullOrEmpty(log)||!File.Exists(log)) return;
+      if(string.IsNullOrEmpty(log)){ WriteUsageStatus("未挂用量日志：link.json 的 log 为空，且未设置环境变量 YALINK_USAGE_LOG。宿主不能枚举用户目录去找 Agent 日志，故不采集、不编造 TOKEN。登记 ya_link 时请加 log=<日志路径> 或设置 YALINK_USAGE_LOG。", ""); return; }
+      if(!File.Exists(log)){ WriteUsageStatus("用量日志指针无效：路径不存在。不采集、不编造 TOKEN。", log); return; }
+      WriteUsageStatus("ok", log);
+
       if((DateTime.UtcNow-usageSyncAt).TotalSeconds<8) return;
       var mt=File.GetLastWriteTimeUtc(log); long len=new FileInfo(log).Length;
       if(mt==usageLogMt && len==usageLogLen && (DateTime.UtcNow-usageSyncAt).TotalSeconds<30) return;
@@ -1587,7 +1602,7 @@ public class YaCard : Window {
     vTokn.Text = (known && showThis) ? Big(Num(d, "task_tokens")) : "未统计";
     uTokn.Text = (known && showThis) ? "tok" : "";vTokn.FontSize=(known && showThis) ? 24 : 18;
     vTok.Text = "待对照"; uTok.Text = "Token 节省";
-    tTokn.ToolTip = known ? "运行环境实测 · " + Str(d,"model") + "\n会话累计 " + Num(d,"total_tokens") + (showThis ? "" : "\n未开任务，不计入本次") + "\n来源时间 " + Str(d,"source_time") + "\n点击查看来源与任务" : "未接入真实用量源；不使用估算";
+    tTokn.ToolTip = known ? "运行环境实测 · " + Str(d,"model") + "\n会话累计 " + Num(d,"total_tokens") + (showThis ? "" : "\n未开任务，不计入本次") + "\n来源时间 " + Str(d,"source_time") + "\n点击查看来源与任务" : UsageMissingReason();
     var reset=ReadJson(System.IO.Path.Combine(ioDir,"actual_display_reset.json"));
     double baseline=known && showThis && Str(reset,"session")==Str(d,"session") && Str(reset,"task")==Str(d,"task") ? Num(reset,"task_tokens") : 0;
     shownTok = (known && showThis) ? Math.Max(0,Num(d,"task_tokens")-baseline) : 0;
@@ -1651,7 +1666,7 @@ public class YaCard : Window {
     try {
       var view=new Dictionary<string,object>();
       view["rendered_utc"]=DateTime.UtcNow.ToString("o");view["task_id"]=task;
-      view["token_text"]=vTokn.Text;view["savings_text"]=vTok.Text;
+      view["token_text"]=vTokn.Text;view["token_reason"]=(vTokn.Text=="未统计"?UsageMissingReason():"");view["savings_text"]=vTok.Text;
       view["library_text"]=vAll.Text;view["common_entries"]=common;view["software_entries"]=software;view["task_percent"]=taskPct;view["task_status"]=Str(current,"status");view["retrieval_calls"]=calls;view["verified_new"]=verified;view["successful_reuses"]=reused;
       view["task_text"]=dSub.Text;view["software_status"]=LinkText();view["command_seconds"]=commandSeconds;view["measured_seconds"]=measuredSeconds;view["retrieval_seconds"]=retrievalSeconds;
       view["retrieval_count"]=searches;view["read_count"]=reads;view["verified_task_mode"]=verifiedMode;
@@ -1663,7 +1678,7 @@ public class YaCard : Window {
   void ShowUsageDetails() {
     StackPanel body;var w=RoundedDialog("用量来源",out body);
     var data=ReadJson(System.IO.Path.Combine(ioDir,"actual_usage.json"));
-    if(Str(data,"source_kind")!="runtime_measured") InfoRow(body,"Token","未统计 · 尚未接入真实来源");
+    if(Str(data,"source_kind")!="runtime_measured") InfoRow(body,"Token","未统计 · "+UsageMissingReason());
     else {
       InfoRow(body,"服务商",Str(data,"provider"));InfoRow(body,"模型",Str(data,"model"));
       InfoRow(body,"输入 Token",Big(Num(data,"input_tokens")));InfoRow(body,"输出 Token",Big(Num(data,"output_tokens")));

@@ -124,7 +124,7 @@ $envArgs=@('-Mode','Diff','-Quiet');if($EnvSnapshot){$envArgs+=@('-Snap',$EnvSna
 $envOut=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '环境快照.ps1') @envArgs
 if($LASTEXITCODE -eq 2){try{$ej=($envOut -join "`n")|ConvertFrom-Json;foreach($c in @($ej.changes)){$hits.Add('env-changed: '+$c)}}catch{$hits.Add('env-changed: (unparsed) '+($envOut -join ' '))}}
 # package self-integrity + untimed target-software launches (needs the round's artifacts)
-function WsOf([string]$p){if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $p}
+function WsOf([string]$p){$data=Join-Path $p '运行数据';if(Test-Path -LiteralPath $data){return $data};if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $data}
 $wsA=WsOf $self;$artA=Join-Path $wsA 'artifacts'
 if($AgentLog -and -not (Test-Path -LiteralPath $artA)){foreach($r in @($PackageRoots)){if($r){$c=Get-ChildItem -LiteralPath $r -Recurse -Directory -Filter 'artifacts' -Depth 3 -ErrorAction SilentlyContinue|Where-Object{[IO.File]::Exists((Join-Path $_.FullName 'pkg-baseline.json'))}|Select-Object -First 1;if($c){$artA=$c.FullName;break}}}}
 $baseF=Join-Path $artA 'pkg-baseline.json'

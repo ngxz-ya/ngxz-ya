@@ -13,7 +13,7 @@ try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $timedRun=[string]$env:NGXZ_TIMED
 if(-not $timedRun){Write-Output 'UNTIMED_LAUNCH: 启动软件.ps1 必须经 适配器\限时运行.ps1 调用：powershell -NoProfile -ExecutionPolicy Bypass -File 适配器\限时运行.ps1 -File 适配器\启动软件.ps1 -TimeoutSec 300 -ArgLine:"-Exe <主程序.exe> -WaitSeconds 240"';exit 9}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
-$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{$pkg})
+$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{Join-Path $pkg '运行数据'})
 $locFile=@((Join-Path $ws '本机定位.json'),(Join-Path $pkg '本机定位.json'))|Where-Object{[IO.File]::Exists($_)}|Select-Object -First 1
 if(-not $locFile){Write-Output 'LOCATE_REQUIRED: 先运行 连接教练\定位软件.ps1（或 一键连接.ps1）';exit 3}
 $loc=Get-Content -LiteralPath $locFile -Raw -Encoding UTF8|ConvertFrom-Json
@@ -73,9 +73,9 @@ $kids=@();try{$kids=@(Get-CimInstance Win32_Process -Filter ("ParentProcessId="+
 $rec=[ordered]@{schema=1;pid=$id;via=$via;interactive_desktop=$interactive;exe=$exeFull;arguments=$Arguments;env_keys=@($set.Keys);temp_dir=$tempDir;timed_run=$timedRun;directory=$Directory;started_local=$t0.ToString('o');seconds=[Math]::Round(((Get-Date)-$t0).TotalSeconds,1);main_window=$hwnd;title=$title;exited=[bool]$exited;children=$kids;modal_dialogs=$dialogs}
 $out=Join-Path $Directory 'launch.json'
 [IO.File]::WriteAllText($out,($rec|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($true))
-$blocking=@($dialogs | Where-Object { $_ -match 'license=True' -or $_ -match 'dismissed=True' -or ($_ -notmatch 'unlabelled=True') })
+$blocking=@($dialogs | Where-Object { $_ -match 'license=True' -or ($_ -notmatch 'unlabelled=True' -and $_ -notmatch 'dismissed=True') })
 if($blocking.Count){Write-Output ('MODAL_DIALOG_FAILPOINT: 启动期间出现 '+$blocking.Count+' 个需处理的弹窗（许可框只记录不关，其它已记录/关闭到 '+(Join-Path $Directory 'dialogs.jsonl')+'）。这是失败点：若弹窗涉及非本轮生成的 DLL/启动目录，说明软件自动加载了包外内容，改用官方环境变量/参数指向本轮空配置后重启；若是本轮桥接，先 接口探测.ps1 -Check 再按本机程序集重编。许可框永不关。record='+$out);exit 7}
-if($dialogs.Count){Write-Output ('NOTE_UNLABELLED_MODAL: 启动期间记录 '+$dialogs.Count+' 个空标题空正文模态（未关闭，不单独作为启动失败）。record='+$out)}
+if($dialogs.Count){Write-Output ('NOTE_MODAL: 启动期间记录 '+$dialogs.Count+' 个弹窗（无标题未关闭的只记 NOTE；已关闭的信息框不再当作失败点；许可框仍是失败点且永不关）。record='+$out)}
 # 换新进程自动重绑 YA（2026-11-10 R10，软件无关）：本包登记的旧进程已退出、且是同一个可执行文件时，对新 PID 自动 ya_link prepare=1，面板从「已掉线」改为「已打开 · 待读回」；之后照常让新进程内桥接写 readback 再登记。
 if($hwnd){
  try{

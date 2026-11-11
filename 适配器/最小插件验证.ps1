@@ -1,5 +1,5 @@
 ﻿# 第一步先读 AGENTS.md「第 0 步」。最小插件验证（软件无关，完整桥接之前必做）：先让目标软件按官方/开源资料的方式加载一个「什么都不干、只写 ready 文件并打印已加载」的空插件，
-# 用软件自身日志确认真的加载了，才允许 适配器\编译桥接.ps1 编完整桥接（否则退出码 8 MINPLUGIN_REQUIRED）。空插件不过，完整桥接也一定加载不进去，别在完整桥接上反复试。
+# 用软件自身日志确认真的加载了，才允许 适配器\编译桥接.ps1 编完整桥接（否则退出码 8 MINPLUGIN_REQUIRED）。空插件不过，完整桥接也一定加载不进去，别在完整桥接上反复试。最小插件通过后立即换完整桥，只再启动软件一次。
 # 1 准备： powershell -NoProfile -ExecutionPolicy Bypass -File 适配器\最小插件验证.ps1 -Init        （给出 ready 文件路径、本轮口令和要写进插件入口的两行代码）
 # 2 编译： powershell -NoProfile -ExecutionPolicy Bypass -File 适配器\编译桥接.ps1 -Probe -Source <空插件.cs> -Out <工作区>\artifacts\minplugin\<名>.dll -References <install_dirs 内官方程序集>
 # 3 加载： 按你在来源里读到的官方/开源加载方式（启动参数、进程级环境变量、插件/启动目录指向 artifacts 等），经 限时运行 调 适配器\启动软件.ps1 启动软件；
@@ -13,7 +13,7 @@ $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 function Norm([string]$x){[IO.Path]::GetFullPath($x).TrimEnd('\')}
 $pkg=Norm (Join-Path $PSScriptRoot '..')
-function WsOf([string]$p){if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $p}
+function WsOf([string]$p){$data=Join-Path $p '运行数据';if(Test-Path -LiteralPath $data){return $data};if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $data}
 $ws=WsOf $pkg
 $art=Join-Path $ws 'artifacts';$dir=Join-Path $art 'minplugin';$probeF=Join-Path $dir 'probe.json';$verF=Join-Path $dir 'verified.json'
 function UtcOf([string]$s){[DateTime]::Parse($s,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()}

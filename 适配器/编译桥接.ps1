@@ -13,7 +13,7 @@ $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 function Norm([string]$x){[IO.Path]::GetFullPath($x).TrimEnd('\')}
 $pkg=Norm (Join-Path $PSScriptRoot '..')
-function WsOf([string]$p){if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $p}
+function WsOf([string]$p){$data=Join-Path $p '运行数据';if(Test-Path -LiteralPath $data){return $data};if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $data}
 $ws=WsOf $pkg
 function Under([string]$x,[string[]]$roots){$n=Norm $x;foreach($r in $roots){if($r -and $n.StartsWith((Norm $r)+'\',[StringComparison]::OrdinalIgnoreCase)){return $true}};return $false}
 $locFile=@((Join-Path $ws '本机定位.json'),(Join-Path $pkg '本机定位.json'))|Where-Object{[IO.File]::Exists($_)}|Select-Object -First 1

@@ -136,8 +136,9 @@ try{
  if(Test-Path -LiteralPath $job){throw 'REQUEST_CONFLICT: preflight evidence exists; use a new request'}
  $nonce=[guid]::NewGuid().ToString('N');$env:YALINK_OPERATION=$nonce
  $used=@()
- $workspace=Split-Path $pkg -Parent
- $mappingFile=Join-Path $workspace '迁移待核验.json'
+ $workspace=$pkg
+ $mappingFile=Join-Path $pkg '迁移待核验.json'
+ if(-not (Test-Path -LiteralPath $mappingFile) -and (Split-Path $pkg -Leaf) -eq '工作区'){ $workspace=Split-Path $pkg -Parent; $mappingFile=Join-Path $workspace '迁移待核验.json' }
  $mapping=if(Test-Path -LiteralPath $mappingFile){Get-Content -LiteralPath $mappingFile -Raw -Encoding UTF8|ConvertFrom-Json}
  foreach($use in @($plan.used_experiences)){
   if(-not $use){continue}

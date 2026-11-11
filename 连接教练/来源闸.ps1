@@ -8,7 +8,7 @@ param([switch]$Add,[switch]$Check,[string]$Url,[string]$Points,[string]$Query,[s
 $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
-$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{$pkg})
+$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{Join-Path $pkg '运行数据'})
 if(-not $File){$File=Join-Path $ws 'artifacts\sources.json'}
 $cache=Join-Path $ws 'artifacts\page-cache'
 $roundF=Join-Path $ws 'artifacts\round.json'

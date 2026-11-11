@@ -2,6 +2,15 @@
 $ErrorActionPreference='Stop'
 $Workspace=[IO.Path]::GetFullPath($Workspace).TrimEnd('\');$Archive=[IO.Path]::GetFullPath($Archive)
 Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
+function Get-YaBackupLayout([string]$Workspace,[object]$Manifest){
+ $legacy=$false
+ if($Manifest){ $legacy=@($Manifest.files|Where-Object {$_.file -ceq '工作区/包信息.json'}).Count -gt 0 }
+ elseif(Test-Path -LiteralPath (Join-Path $Workspace '工作区\包信息.json')){ $legacy=$true }
+ if($legacy){
+  return [ordered]@{legacy=$true;runtime=(Join-Path $Workspace '工作区');state=(Join-Path $Workspace '工作区\运行状态');required=@('工作区说明.json','程序版本.json','工作区/包信息.json','工作区/AGENTS.md');names=@('工作区','artifacts','成果','工作区说明.json','程序版本.json','迁移待核验.json');hudSkip=@('工作区/运行状态/io/hud_view.json')}
+ }
+ return [ordered]@{legacy=$false;runtime=$Workspace;state=(Join-Path $Workspace '运行数据\运行状态');required=@('工作区说明.json','程序版本.json','包信息.json','AGENTS.md');names=@('运行数据','经验库','连接教练\连接经验','成果','artifacts','工作区说明.json','程序版本.json','包信息.json','AGENTS.md','迁移待核验.json');hudSkip=@('运行数据/运行状态/io/hud_view.json','工作区/运行状态/io/hud_view.json')}
+}
 if($Action -eq 'Restore'){
  if(Test-Path -LiteralPath $Workspace){throw '恢复只允许不存在的新目录，拒绝覆盖'}
  $zip=[IO.Compression.ZipFile]::OpenRead($Archive)
@@ -9,7 +18,8 @@ if($Action -eq 'Restore'){
   $manifestEntry=$zip.GetEntry('backup-manifest.json');if(-not $manifestEntry){throw '备份清单缺失'}
   $reader=[IO.StreamReader]::new($manifestEntry.Open());try{$manifest=$reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}
   if($manifest.schema -ne 1 -or $manifest.product -cne 'ngxz-ya'){throw '备份类型不符'}
-  foreach($required in @('工作区说明.json','程序版本.json','工作区/包信息.json','工作区/AGENTS.md')){if(@($manifest.files|Where-Object {$_.file -ceq $required}).Count -ne 1){throw ('备份缺少必需内容: '+$required)}}
+  $layout=Get-YaBackupLayout $Workspace $manifest
+  foreach($required in @($layout.required)){if(@($manifest.files|Where-Object {$_.file -ceq $required}).Count -ne 1){throw ('备份缺少必需内容: '+$required)}}
   $names=@{};foreach($entry in $zip.Entries){
    $target=[IO.Path]::GetFullPath((Join-Path $Workspace $entry.FullName))
    if(-not $target.StartsWith($Workspace+'\',[StringComparison]::OrdinalIgnoreCase) -or $entry.FullName -match '[:\\]' -or $names.ContainsKey($entry.FullName)){throw '不安全或重复的备份路径'}
@@ -24,8 +34,8 @@ if($Action -eq 'Restore'){
   }
  }finally{$zip.Dispose()}
  [IO.Compression.ZipFile]::ExtractToDirectory($Archive,$Workspace)
- # Archive live pointers separately. Historical request directories and original receipt bytes stay intact.
- $stateHome=Join-Path $Workspace '工作区\运行状态'
+ $layout=Get-YaBackupLayout $Workspace $null
+ $stateHome=$layout.state
  $history=Join-Path $stateHome ('迁移历史\'+[guid]::NewGuid().ToString('N'))
  foreach($name in @('operation.json','operation_request.json','quick_request.json','io\link.json','io\challenge.json','io\frontend-acceptance.json','io\hud_window.json')){
   $oldPath=Join-Path $stateHome $name
@@ -47,8 +57,10 @@ if($Action -eq 'Restore'){
 if(Test-Path -LiteralPath $Archive){throw '备份文件已存在，拒绝覆盖'}
 if($Archive.StartsWith($Workspace+'\',[StringComparison]::OrdinalIgnoreCase)){throw '请将备份保存到工作区之外'}
 $marker=Get-Content -LiteralPath (Join-Path $Workspace '工作区说明.json') -Raw -Encoding UTF8|ConvertFrom-Json
-if($marker.product -cne 'ngxz-ya' -or $marker.runtime -cne '工作区'){throw '不是本工具管理的工作区'}
-$runtime=Join-Path $Workspace '工作区'
+if($marker.product -cne 'ngxz-ya' -or $marker.schema -ne 1){throw '不是本工具管理的工作区'}
+if($marker.runtime -cnotin @('工作区','包根')){throw '不是本工具管理的工作区'}
+$layout=Get-YaBackupLayout $Workspace $null
+$runtime=$layout.runtime
 . (Join-Path $runtime 'YA插件\连接上下文.ps1')
 . (Join-Path $runtime 'YA插件\真实记录.ps1')
 $locks=@();$zip=$null
@@ -59,14 +71,16 @@ try{
  }
  Assert-YaOperation $runtime
  $filesByName=@{}
- foreach($name in @('工作区','artifacts','成果','工作区说明.json','程序版本.json','迁移待核验.json')){
+ $backupNames=@($layout.names)
+ if(-not $layout.legacy){ $backupNames=@(Get-ChildItem -LiteralPath $Workspace -Force | Where-Object { $_.Name -notin @('部署记录','备份') -and $_.Name -notlike '*.zip' } | ForEach-Object { $_.Name }) }
+ foreach($name in @($backupNames)){
   $path=Join-Path $Workspace $name
   if(Test-Path -LiteralPath $path){
    foreach($item in @(Get-Item -LiteralPath $path)+@(Get-ChildItem -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue)){
     if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw '备份拒绝重解析点'}
     if(-not $item.PSIsContainer){
      $relative=$item.FullName.Substring($Workspace.Length+1).Replace('\','/')
-     if($relative -ceq '工作区/运行状态/io/hud_view.json'){continue} # Derived live rendering; actual events and usage are retained.
+     if(@($layout.hudSkip) -contains $relative){continue}
      $filesByName[$relative]=[pscustomobject]@{path=$item.FullName;file=$relative;sha256=(Get-FileHash -LiteralPath $item.FullName).Hash}
     }
    }
@@ -77,7 +91,7 @@ try{
  foreach($row in $files){[IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,$row.path,$row.file)|Out-Null}
  foreach($row in $files){if((Get-FileHash -LiteralPath $row.path).Hash -cne $row.sha256){throw '备份期间内容改变，保留失败归档但不可用于恢复'}}
  $entry=$zip.CreateEntry('backup-manifest.json');$writer=[IO.StreamWriter]::new($entry.Open(),[Text.UTF8Encoding]::new($false))
- try{$writer.Write((@{schema=1;product='ngxz-ya';source=$Workspace;excluded=@('工作区/运行状态/io/hud_view.json: derived live rendering');files=@($files|ForEach-Object{@{file=$_.file;sha256=$_.sha256}})}|ConvertTo-Json -Depth 6))}finally{$writer.Dispose()}
+ try{$writer.Write((@{schema=1;product='ngxz-ya';source=$Workspace;excluded=@((@($layout.hudSkip)|ForEach-Object{$_+': derived live rendering'}));files=@($files|ForEach-Object{@{file=$_.file;sha256=$_.sha256}})}|ConvertTo-Json -Depth 6))}finally{$writer.Dispose()}
  $zip.Dispose();$zip=$null
  @{status='BACKUP_CREATED';archive=$Archive;sha256=(Get-FileHash -LiteralPath $Archive).Hash;files=$files.Count;privacy='包含私人经验、模型和记录，不能公开'}|ConvertTo-Json
 }finally{if($zip){$zip.Dispose()};foreach($lock in $locks){$lock.ReleaseMutex();$lock.Dispose()}}

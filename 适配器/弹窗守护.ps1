@@ -9,7 +9,7 @@ param([Parameter(Mandatory=$true)][int]$TargetPid,[int]$Seconds=0,[switch]$Dismi
 $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
-$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{$pkg})
+$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{Join-Path $pkg '运行数据'})
 if(-not $Log){$Log=Join-Path $ws 'artifacts\dialogs.jsonl'}
 [IO.Directory]::CreateDirectory((Split-Path $Log -Parent))|Out-Null
 if(-not ('YaDialogScan' -as [type])){

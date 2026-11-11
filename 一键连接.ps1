@@ -1,6 +1,6 @@
 ﻿# 第一步先读 AGENTS.md「第 0 步」。这是一条命令的通用脚本链入口（任何机械软件同一套，不含任何软件专属连接方法）。
-# 用法（在包根）：powershell -NoProfile -ExecutionPolicy Bypass -File .\一键连接.ps1 -Software "<软件名>" -StartDir "<本会话起点目录>"
-# 阶段：0 落位 → 1 定位软件 → 2 部署工作区 → 3 连接前查通用卡 → 4 有本机连接经验就快连 / 没有就停在 NEED_AGENT_METHOD 并打印后续命令。
+# 用法（包应在桌面固定路径 ngxz-ya；若在别处会先落到那里）：powershell -NoProfile -ExecutionPolicy Bypass -File .\一键连接.ps1 -Software "<软件名>"
+# 阶段：0 落位到桌面 ngxz-ya（只检查这一固定路径，有包就用） → 1 定位软件 → 2 就地启用（包根即工作区） → 3 连接前查通用卡 → 4 有本机连接经验就快连 / 没有就停在 NEED_AGENT_METHOD 并打印后续命令。
 param([Parameter(Mandatory=$true)][string]$Software,[string]$StartDir,[string]$Slot,[switch]$NoPanel)
 $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
@@ -9,20 +9,23 @@ function Say([string]$s){Write-Output ('['+('{0,6:N1}' -f ((Get-Date)-$t0).Total
 function PS1([string]$f,[string[]]$a){& powershell -NoProfile -ExecutionPolicy Bypass -File $f @a|Out-Host;return $LASTEXITCODE}
 $me=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
 Write-Output '== ngxz-ya 一键连接（通用脚本链）=='
-Write-Output 'STEP0: 只碰本包、起点目录、本机定位.json 的 install_dirs；每个大步骤前跑 连接教练\越界路径审计.ps1（退出码 2=本轮失败，立即停）。'
-Write-Output 'CHAIN: 0落位 → 1定位软件 → 2部署工作区 → 3连接前查通用卡 → 4快连(有经验) | NEED_AGENT_METHOD(无经验：上网找合法方法 → 编译桥接 → 启动软件 → 握手登记 → 建模前查卡 → Connect改模+独立读回 → 存经验)'
-if((Split-Path $me -Leaf) -eq '工作区'){Write-Output 'WRONG_ENTRY: 请在下载包根（ngxz-ya-main）运行本脚本，不要在 工作区 内运行';exit 9}
-# 0 落位
+Write-Output 'STEP0: 只碰本包、桌面固定路径 ngxz-ya、本机定位.json 的 install_dirs；不列举桌面其他内容；每个大步骤前跑 连接教练\越界路径审计.ps1（退出码 2=本轮失败，立即停）。'
+Write-Output 'CHAIN: 0落位(桌面 ngxz-ya) → 1定位软件 → 2就地启用 → 3连接前查通用卡 → 4快连(有经验) | NEED_AGENT_METHOD(无经验：上网找合法方法 → 最小插件验证通过后立即换完整桥且只再启一次 → 握手登记 → 建模前查卡 → Connect改模+独立读回 → 存经验)'
+. (Join-Path $me 'YA插件\连接上下文.ps1')
+if((Split-Path $me -Leaf) -eq '工作区'){Write-Output 'WRONG_ENTRY: 请在包根运行本脚本（桌面固定路径 ngxz-ya），不要在旧的 工作区 子目录内运行';exit 9}
+# 0 落位：只检查桌面固定路径 ngxz-ya，有包就用，没有才复制过去
 $lw=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $me '连接教练\落位.ps1') -Package $me @(if($StartDir){@('-StartDir',$StartDir)})
 $lc=$LASTEXITCODE;$lw|Where-Object{$_ -notmatch '^\{'}|ForEach-Object{Say $_}
 if($lc -ne 0){exit $lc}
 $r=($lw|Where-Object{$_ -match '^\{'}|Select-Object -Last 1)|ConvertFrom-Json
-if($r.moved){
-  Say ('0 落位：转到 '+$r.package+' 继续（之后只在那里工作）')
-  $a=@('-Software',$Software,'-StartDir',(Split-Path $r.package -Parent));if($Slot){$a+=@('-Slot',$Slot)};if($NoPanel){$a+='-NoPanel'}
-  exit (PS1 (Join-Path $r.package '一键连接.ps1') $a)
+$dest= if($r.package){[IO.Path]::GetFullPath($r.package).TrimEnd('\')}else{$me}
+if($dest -ine $me){
+  Say ('0 落位：转到桌面固定路径 '+$dest+' 继续（只检查这一路径，包根即工作区）')
+  $a=@('-Software',$Software);if($Slot){$a+=@('-Slot',$Slot)};if($NoPanel){$a+='-NoPanel'}
+  exit (PS1 (Join-Path $dest '一键连接.ps1') $a)
 }
-Say ('0 落位：本包在 '+$me)
+Say ('0 落位：本包在桌面固定路径 '+$me)
+
 # 1 定位
 $lo=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $me '连接教练\定位软件.ps1') -Software $Software;$c=$LASTEXITCODE;$lo|Where-Object{$_ -match '^(LOCATED|NOT_FOUND)'}|ForEach-Object{Say $_}
 if($c -eq 3){Say 'STOP 1 定位：没找到目标软件。按规则报告并停止，不得自行扩大搜索。';exit 3}
@@ -36,21 +39,20 @@ if([IO.File]::Exists($snapF)){Say ('1b 环境快照：沿用本轮已有 '+$snap
 $pc=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $me '连接教练\环境快照.ps1') -Mode Precheck -LocateFile (Join-Path $me '本机定位.json');$pcc=$LASTEXITCODE
 if($pcc -eq 2){Say ('STOP 1c 开测前环境不干净：'+($pc -join ' '));Say '  这些持久环境变量会让软件启动时加载旧桥接/旧启动目录。不要自己删除（禁止持久改环境），如实报告用户，由用户清理后重跑本脚本。';exit 11}
 Say ('1c 环境硬检查：'+($pc -join ' '))
-# 2 部署
-$start=Split-Path $me -Parent
-$desk=[IO.Path]::GetFullPath([Environment]::GetFolderPath('DesktopDirectory')).TrimEnd('\')
-$inPlace=($StartDir -and [IO.Path]::GetFullPath($StartDir).TrimEnd('\') -ieq $me)
-$wsRoot=$(if($inPlace){Join-Path $me 'ngxz-ya-ws'}elseif($start -ieq $desk){Join-Path $desk 'ngxz-ya'}else{Join-Path $start 'ngxz-ya-ws'})
-$a=@('-Software',$Software,'-Workspace',$wsRoot);if(-not (Test-Path -LiteralPath $wsRoot)){$a+='-Fresh'};if($NoPanel){$a+='-NoPanel'}
+# 2 就地启用（包根即工作区；运行数据收 artifacts / 运行状态）
+$a=@('-Software',$Software,'-Workspace',$me);if($NoPanel){$a+='-NoPanel'}
 $src=Join-Path $me '下载来源.json'
 $out=& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $me '启动.ps1') @a
 $dc=$LASTEXITCODE;$out|ForEach-Object{Write-Output $_}
 $wl=$out|Where-Object{$_ -match '^workspace: '}|Select-Object -Last 1
 if(-not $wl){Say ('STOP 2 部署失败 exit='+$dc+'（保留现场，报告上面原文）');exit 2}
-$rt=$wl.Substring(11).Trim();$ws=Split-Path $rt -Parent
-if([IO.File]::Exists($src)){[IO.File]::Copy($src,(Join-Path $ws '下载来源.json'),$true)}
-if([IO.File]::Exists($snapF)){[void][IO.Directory]::CreateDirectory((Join-Path $ws 'artifacts'));[IO.File]::Copy($snapF,(Join-Path $ws 'artifacts\env-snapshot.json'),$true)}
-Say ('2 部署：工作区 = '+$rt+'（Check exit='+$dc+'，FRONTEND_ADAPTER_MISSING 等在首连时属正常）')
+$rt=$wl.Substring(11).Trim()
+$ws=Join-Path $rt '运行数据'
+[void][IO.Directory]::CreateDirectory((Join-Path $ws 'artifacts'))
+if([IO.File]::Exists($src) -and $src -ine (Join-Path $rt '下载来源.json')){[IO.File]::Copy($src,(Join-Path $rt '下载来源.json'),$true)}
+if([IO.File]::Exists($snapF)){[IO.File]::Copy($snapF,(Join-Path $ws 'artifacts\env-snapshot.json'),$true)}
+Say ('2 部署：工作区 = '+$rt+'（包根即工作区，运行数据='+$ws+'；Check exit='+$dc+'，FRONTEND_ADAPTER_MISSING 等在首连时属正常）')
+
 # 2b 本会话起点（来源闸只认此后由 取页.ps1 打开的网页）+ 包自身脚本哈希基线（越界审计核对：Agent 改包脚本 = 本轮失败）
 $artD=Join-Path $ws 'artifacts';[void][IO.Directory]::CreateDirectory($artD)
 $roundF=Join-Path $artD 'round.json';$newRound=$true
@@ -63,7 +65,7 @@ if(-not [IO.File]::Exists($baseF)){
   foreach($root in @($me,$rt)){$rn=[IO.Path]::GetFullPath($root).TrimEnd('\');$fh=[ordered]@{}
     Get-ChildItem -LiteralPath $rn -Recurse -File -ErrorAction SilentlyContinue|Where-Object{$_.Extension -match '^(?i)\.(ps1|psm1|cs|bat|cmd|py|js)$'}|ForEach-Object{
       $rel=$_.FullName.Substring($rn.Length+1)
-      if($rel -like 'artifacts\*' -or $rel -like 'ngxz-ya-ws\*' -or $rel -like '连接教练\连接经验\*\*'){return}
+      if($rel -like 'artifacts\*' -or $rel -like '运行数据\*' -or $rel -like 'ngxz-ya-ws\*' -or $rel -like '连接教练\连接经验\*\*'){return}
       $fh[$rel]=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash}
     $roots[$rn]=$fh}
   [IO.File]::WriteAllText($baseF,(([ordered]@{schema=1;created_utc=[DateTime]::UtcNow.ToString('o');rule='包自身脚本不得被 Agent 修改；越界审计逐个核对哈希';roots=$roots})|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
@@ -85,8 +87,9 @@ if($Slot){
 }
 if($fast){
   Say ('4 复用：发现本机连接经验（槽 '+$Slot+'），跑 快连.ps1')
-  Push-Location $rt
-  try{$q=& powershell -NoProfile -ExecutionPolicy Bypass -File '.\连接教练\连接经验\快连.ps1' ("slot="+$Slot);$qc=$LASTEXITCODE}finally{Pop-Location}
+    Push-Location $rt
+  try{$q=& powershell -NoProfile -ExecutionPolicy Bypass -File '.\适配器\限时运行.ps1' -File '.\连接教练\连接经验\快连.ps1' -TimeoutSec 300 -ArgLine:('slot='+$Slot);$qc=$LASTEXITCODE}finally{Pop-Location}
+
   $q|ForEach-Object{Write-Output $_}
   if(@($q|Where-Object{$_ -match 'RESULT: (OK|ALREADY_REGISTERED)'}).Count){
     Say ('CONNECTED_VIA_SAVED_EXPERIENCE 槽='+$Slot+' 用时 '+[Math]::Round(((Get-Date)-$t0).TotalSeconds,1)+'s')
@@ -110,7 +113,7 @@ Write-Output ('  b) 生成驱动草稿：.\适配器\准备接入.ps1 -Software 
 Write-Output '  b2) 写任何接口调用前先探测本机版本真实有的成员：.\适配器\接口探测.ps1 -Assemblies <install_dirs 内官方程序集> ；用到的成员再 -Check "类型::成员,..."，缺失就换能力文件里有的成员（别照搬别的版本的示例）。'
 Write-Output '  b3) 【硬闸】最小插件验证（完整桥接之前）：.\适配器\最小插件验证.ps1 -Init → 写一个只写 ready 文件+打印"已加载"的空插件 → .\适配器\编译桥接.ps1 -Probe -Source <空插件.cs> -Out <工作区>\artifacts\minplugin\<名>.dll -References <官方程序集>'
 Write-Output '      → 按来源资料的加载方式（入口方法、插件/启动目录、启动参数、进程级环境变量）经 限时运行+启动软件 启动 → .\适配器\最小插件验证.ps1 -Verify -TargetPid <PID>（ready 文件+软件自身日志都确认才 MINPLUGIN_VERIFIED）。'
-Write-Output '      空插件不过就别上完整桥接：看它打印的日志相关行，对照资料改加载方式；没过 c) 编译桥接（不带 -Probe）拒绝（退出码 8 MINPLUGIN_REQUIRED）。'
+Write-Output '      空插件不过就别上完整桥接：看它打印的日志相关行，对照资料改加载方式；没过 c) 编译桥接（不带 -Probe）拒绝（退出码 8 MINPLUGIN_REQUIRED）。最小插件通过后立即换完整桥，只再启动软件一次（不要再走一遍空插件启动）。'
 Write-Output ('  c) 桥接源码只写在 连接教练\连接经验\'+$Slot+'\ 或 artifacts 内；沿用空插件已验证的加载方式；编译：.\适配器\编译桥接.ps1 -Source <.cs> -Out <dll> -References <install_dirs 内的官方程序集> [-Versioned]')
 Write-Output '     桥接通用要求（见 适配器\说明.md）：工作文件先查是否存在→存在就打开、打不开换唯一文件名再新建；拿到活动文档/部件先判空，空就回错误不执行；任何异常都回完整 JSON（带 protocol/action/request、ok=false、error=原文）。'
 Write-Output '     改了桥接再编译 = RELOAD_REQUIRED：软件里已加载的是旧版，必须卸载/重载或重启软件后，用 QUERY_SESSION 核对 bridge_build 再测。'
@@ -119,12 +122,12 @@ Write-Output '     .\适配器\限时运行.ps1 -File .\适配器\启动软件.p
 Write-Output '     若打印 NOT_INTERACTIVE_DESKTOP（命令跑在隔离桌面）：弹窗守护、连接软件.ps1 Connect/Run、YA插件\ya_link.ps1、show_ya.ps1 都用 .\适配器\限时运行.ps1 -OnDesktop -File <脚本> -ArgLine:"参数" 在用户桌面上跑。'
 Write-Output '     启动软件.ps1 自带弹窗守护：错误弹窗会被静默关闭并记录（退出码 7 = 失败点）；改模期间可另开 .\适配器\弹窗守护.ps1 -TargetPid <PID> -Seconds 600 -Dismiss -RetryScript <你的重建+重启脚本> -MaxRetries 2 做有限次自愈，到上限如实报告。'
 Write-Output '     软件若自动加载包外自定义/插件目录：用官方文档的环境变量/参数指向 artifacts 内空配置，不读取不加载那些目录。'
-Write-Output ('  e) 握手登记：.\YA插件\ya_link.ps1 soft='+$Software+' slot='+$Slot+' pid=<GUI PID> prepare=1 → 由软件内桥接写 readback → 去掉 prepare=1 再跑一次登记')
+Write-Output ('  e) 握手登记：.\YA插件\ya_link.ps1 soft='+$Software+' slot='+$Slot+' pid=<GUI PID> prepare=1 → 由软件内桥接写 readback → 去掉 prepare=1 再跑一次登记')（有 Agent 用量日志时加 log=<日志路径> 或设环境变量 YALINK_USAGE_LOG；没有合法指针时面板如实显示「未统计」并写明原因，不编造 TOKEN）
 Write-Output '  f) 建模前查卡（必做，留证）：.\连接教练\查通用卡.ps1 -Stage 建模前 [-Q 关键词]；读全文 -Get <编号>；照做后 -Apply <编号> -How "..."。连接软件.ps1 Connect/Run 也会自动补记一次 建模前 查卡。'
 Write-Output ('  g) 首连轻读回验收（简单特征，独立读回尺寸+面数）：.\连接软件.ps1 -Software "'+$Software+'" -Action Connect -TaskFile <任务.json>（见 适配器\说明.md）')
 Write-Output ('  h) 通过后立即存经验：写 连接卡 + 连接教练\连接经验\'+$Slot+'\快通道.ps1，再 .\连接教练\连接经验\连接经验.ps1 add slot='+$Slot+' file=<卡.json>；下次 一键连接 会直接快连。')
 Write-Output '  调用规则（防卡死）：所有可执行程序（软件自带的命令行工具、主程序）都经 .\适配器\限时运行.ps1（-Exe <程序> 或 -File <脚本>）跑；直接 & xxx.exe / Start-Process / cmd /c 调用 = 越界审计违规。'
-Write-Output '     不要手写嵌套多行 powershell -Command "..."。多行逻辑写成 artifacts\*.ps1，用 .\适配器\限时运行.ps1 -File <脚本> -TimeoutSec 60 [-ArgLine:"参数"] 跑；'
+Write-Output '     不要手写嵌套多行 powershell -Command "..."。多行逻辑写成 artifacts\*.ps1，用 .\适配器\限时运行.ps1 -File <脚本> -TimeoutSec 60 [-ArgLine:"参数"] 跑（快连.ps1 / 快通道自验至少 -TimeoutSec 300，脚本本身也会把低于 300 的值抬到 300）；'
 Write-Output '     查软件窗口/YA：.\适配器\YA查询.ps1 -TargetPid <PID>；给桥接发命令/读回：.\适配器\调用桥接.ps1 -Pipe <ngxz-ya-32hex> -TargetPid <PID> -Action <动作> [-BodyFile <json>] -TimeoutSec 30。都自带超时。'
 Write-Output '  环境规则：只许进程级环境变量（启动软件.ps1 -Env 名=值）。禁止 setx、SetEnvironmentVariable(…User/Machine)、写注册表、改 install_dirs 里的任何文件；越界审计会对比 1b 环境快照，有改动即本轮失败。'
 Write-Output '  包规则：不得修改本包自带的脚本（适配器\*.ps1、YA插件\*.cs/*.ps1、连接教练\*.ps1 等）；自己的代码只写在 artifacts 或 连接教练\连接经验\<槽>\。越界审计核对包脚本哈希，改了 = 本轮失败。包脚本不适用就如实报告。'

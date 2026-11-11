@@ -10,7 +10,7 @@ try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $ProgressPreference='SilentlyContinue'
 try{[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12}catch{}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
-$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{$pkg})
+$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{Join-Path $pkg '运行数据'})
 $cache=Join-Path $ws 'artifacts\page-cache';[IO.Directory]::CreateDirectory($cache)|Out-Null
 function Sha([byte[]]$b){$h=[Security.Cryptography.SHA256]::Create();(-join ($h.ComputeHash($b)|ForEach-Object{$_.ToString('x2')}))}
 function Key([string]$u){(Sha ([Text.Encoding]::UTF8.GetBytes($u.Trim().TrimEnd('/').ToLowerInvariant()))).Substring(0,20)}

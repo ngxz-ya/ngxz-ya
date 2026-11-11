@@ -3,7 +3,7 @@
 $ErrorActionPreference='Stop'
 $source=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
 $target=[IO.Path]::GetFullPath($Destination).TrimEnd('\')
-if($target -ieq $source -or ($target.StartsWith(($source+'\'),[StringComparison]::OrdinalIgnoreCase) -and -not $target.StartsWith(($source+'\ngxz-ya-ws\'),[StringComparison]::OrdinalIgnoreCase))){throw '目标必须在源码目录之外（唯一例外：克隆到起点目录时的 <包根>\ngxz-ya-ws）'}
+if($target -ieq $source -or $target.StartsWith(($source+'\'),[StringComparison]::OrdinalIgnoreCase)){throw '目标必须在源码目录之外（桌面固定路径 ngxz-ya 不在源码目录内；不再使用 ngxz-ya-ws 例外）'}
 foreach($path in @($target,($target+'.manifest.json'),($target+'.SHA256SUMS.txt'))){if(Test-Path -LiteralPath $path){throw ('禁止覆盖已有路径: '+$path)}}
 $policy=Get-Content -LiteralPath (Join-Path $source '发布允许清单.json') -Raw -Encoding UTF8|ConvertFrom-Json
 if($policy.schema -ne 1){throw '不支持的允许清单版本'}

@@ -8,7 +8,10 @@ $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
 if(-not $Log){
-  if((Split-Path $pkg -Leaf) -eq '工作区'){$Log=Join-Path (Split-Path $pkg -Parent) 'artifacts\card-calls.jsonl'}else{$Log=Join-Path $pkg 'card-calls.jsonl'}
+  $data=Join-Path $pkg '运行数据'
+  if(-not (Test-Path -LiteralPath $data) -and (Split-Path $pkg -Leaf) -eq '工作区'){$data=Split-Path $pkg -Parent}
+  if(-not (Test-Path -LiteralPath $data)){$data=$data}
+  $Log=Join-Path $data 'artifacts\card-calls.jsonl'
 }
 [IO.Directory]::CreateDirectory((Split-Path $Log -Parent))|Out-Null
 $qs=Join-Path $pkg '经验库\通用技能库\00_索引\查询.ps1'
@@ -35,7 +38,12 @@ if($Get){
 }
 $Q=@($Q|ForEach-Object{$_ -split ','}|Where-Object{$_});if(-not $Q){$Q=$default[$Stage];if(-not $Q){$Q=@($Stage)}}
 $all=New-Object System.Collections.Generic.List[object]
+$seenQ=@{}
+if([IO.File]::Exists($Log)){
+  try{ Get-Content -LiteralPath $Log -Encoding UTF8 | ForEach-Object { $r=$_|ConvertFrom-Json; if($r.kind -eq 'skill_search' -and $r.stage -ceq $Stage -and $r.q){ $seenQ[[string]$r.q]=$true } } }catch{}
+}
 foreach($term in @($Q|ForEach-Object{$_ -split ','}|Where-Object{$_})){
+  if($seenQ.ContainsKey([string]$term)){ Write-Output ('CARD_SKIP_DUP: 同阶段同关键词已查过 q='+$term+' stage='+$Stage+'（不重复检索，见 '+$Log+'）'); continue }
   $raw=& powershell -NoProfile -ExecutionPolicy Bypass -File $qs skill_search ("q="+$term) max=5|Out-String
   $ids=@();try{$j=($raw -split 'RESULT:')[0]|ConvertFrom-Json;$ids=@($j.entries|ForEach-Object{$_.id});foreach($e in @($j.entries)){$all.Add($e)}}catch{}
   Put ([ordered]@{utc=$now;stage=$Stage;kind='skill_search';q=$term;hits=$ids})

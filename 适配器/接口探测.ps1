@@ -7,7 +7,7 @@ param([Parameter(Mandatory=$true)][string[]]$Assemblies,[string]$TypeFilter='.',
 $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
-$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{$pkg})
+$ws=$(if((Split-Path $pkg -Leaf) -eq '工作区'){Split-Path $pkg -Parent}else{Join-Path $pkg '运行数据'})
 $locFile=@((Join-Path $ws '本机定位.json'),(Join-Path $pkg '本机定位.json'))|Where-Object{[IO.File]::Exists($_)}|Select-Object -First 1
 if(-not $locFile){Write-Output 'LOCATE_REQUIRED: 先运行 一键连接.ps1';exit 3}
 $inst=@((Get-Content -LiteralPath $locFile -Raw -Encoding UTF8|ConvertFrom-Json).install_dirs|ForEach-Object{[IO.Path]::GetFullPath($_).TrimEnd('\')})

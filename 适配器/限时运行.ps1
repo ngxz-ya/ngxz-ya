@@ -14,7 +14,10 @@ $ErrorActionPreference='Stop'
 try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}catch{}
 if([bool]$File -eq [bool]$Exe){Write-Output 'TIMED_BAD_ARGS: -File <脚本.ps1> 和 -Exe <程序.exe> 二选一';exit 2}
 $pkg=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
-function WsOf([string]$p){if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $p}
+# 快通道自验含读回后的挑战/登记/前台复核；外层 60s 会在 proof 完成前被掐掉，卡留 v=0。目标为 快连.ps1 且超时低于 300 秒时抬到 300。
+if($File){ $fn=[IO.Path]::GetFileName($File); if($fn -ieq '快连.ps1' -and $TimeoutSec -lt 300){ Write-Output ('TIMEOUT_ADJUSTED: 快连/快通道自验至少 300 秒（调用方给了 '+[string]$TimeoutSec+'）。读回已成功后还要做挑战/登记/前台复核，60 秒会被掐掉并留下 v=0。'); $TimeoutSec=300 } }
+
+function WsOf([string]$p){$data=Join-Path $p '运行数据';if(Test-Path -LiteralPath $data){return $data};if((Split-Path $p -Leaf) -eq '工作区'){return Split-Path $p -Parent};foreach($c in @((Join-Path $p 'ngxz-ya-ws'),(Join-Path (Split-Path $p -Parent) 'ngxz-ya-ws'))){if(Test-Path -LiteralPath (Join-Path $c '工作区')){return $c}};return $data}
 $ws=WsOf $pkg
 $runLog=Join-Path $ws 'artifacts\timed-runs.jsonl'
 function Log($o){try{[IO.Directory]::CreateDirectory((Split-Path $runLog -Parent))|Out-Null;[IO.File]::AppendAllText($runLog,(($o|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false))}catch{}}

@@ -13,7 +13,7 @@ try{
  }
  # 采用过的通用卡（card-calls.jsonl 里 kind=apply）自动写进任务 JSON 的 used_general_cards（不进 used_experiences：那里只放本机已实测的软件经验）
  if($Action -in @('Connect','Run') -and $TaskFile -and (Test-Path -LiteralPath $TaskFile)){
-  try{$cl=Join-Path (Split-Path $pkg -Parent) 'artifacts\card-calls.jsonl'
+  try{$cl=@((Join-Path $pkg '运行数据\artifacts\card-calls.jsonl'),(Join-Path (Split-Path $pkg -Parent) 'artifacts\card-calls.jsonl'))|Where-Object{Test-Path -LiteralPath $_}|Select-Object -First 1; if(-not $cl){$cl=Join-Path $pkg '运行数据\artifacts\card-calls.jsonl'}
    if(Test-Path -LiteralPath $cl){
     $ap=@([IO.File]::ReadAllLines($cl,[Text.Encoding]::UTF8)|Where-Object{$_ -match '"kind":"apply"'}|ForEach-Object{try{$_|ConvertFrom-Json}catch{}}|Where-Object{$_ -and $_.id})
     if($ap.Count){

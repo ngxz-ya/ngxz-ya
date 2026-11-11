@@ -18,10 +18,15 @@ public static class YaEvidence {
     if (!System.Text.RegularExpressions.Regex.IsMatch(slot, "^[a-z][a-z0-9_-]{0,31}$") || slot == "all" || slot == "generic") throw new System.ArgumentException("slot= must be a dedicated slot id");
     string marker = System.IO.Path.Combine(pkg, "包信息.json");
     if (System.IO.File.Exists(marker) && S(Read(marker), "stage") == "UserWorkspace") {
+      // Prefer package-root 运行数据\artifacts (package root == workspace).
+      // Legacy layout (...\ngxz-ya-ws\工作区) kept artifacts beside 工作区, not on the desktop.
+      string data = System.IO.Path.Combine(pkg, "运行数据", "artifacts");
       string parent = System.IO.Directory.GetParent(pkg).FullName;
-      // ASCII artifacts avoids GBK/UTF-8 path corruption across pipes and native bridges.
-      string ascii = WorkDir(System.IO.Path.Combine(parent, "artifacts"), slot, pkg);
-      string legacy = System.IO.Path.Combine(parent, "成果", slot, Identity(pkg));
+      bool legacyLayout = System.IO.Path.GetFileName(pkg).Equals("工作区", System.StringComparison.Ordinal) &&
+        (System.IO.Directory.Exists(System.IO.Path.Combine(parent, "artifacts")) || System.IO.Directory.Exists(System.IO.Path.Combine(pkg, "运行状态")));
+      string artRoot = legacyLayout ? System.IO.Path.Combine(parent, "artifacts") : data;
+      string ascii = WorkDir(artRoot, slot, pkg);
+      string legacy = System.IO.Path.Combine(legacyLayout ? parent : System.IO.Path.Combine(pkg, "运行数据"), "成果", slot, Identity(pkg));
       if (System.IO.Directory.Exists(ascii) || !System.IO.Directory.Exists(legacy)) return ascii;
       return legacy;
     }
@@ -30,7 +35,6 @@ public static class YaEvidence {
     return WorkDir(System.IO.Path.Combine(root, "YALink", "work"), slot, pkg);
   }
 
-  // Bridge/DLL used for SoftOn must live under this package or its managed workspace (or be generated this run under Work()).
   public static string AssertLocalBridge(string pkg, string bridgePath) {
     if (string.IsNullOrWhiteSpace(bridgePath)) return "bridge-path-required";
     string full = System.IO.Path.GetFullPath(bridgePath);
@@ -38,14 +42,18 @@ public static class YaEvidence {
     string pkgFull = System.IO.Path.GetFullPath(pkg).TrimEnd('\\');
     System.IO.DirectoryInfo parentInfo = System.IO.Directory.GetParent(pkgFull);
     string parent = parentInfo != null ? parentInfo.FullName.TrimEnd('\\') : pkgFull;
+    string dataArt = System.IO.Path.Combine(pkgFull, "运行数据", "artifacts");
+    string dataLegacy = System.IO.Path.Combine(pkgFull, "运行数据", "成果");
     string workAscii = System.IO.Path.Combine(parent, "artifacts");
     string workLegacy = System.IO.Path.Combine(parent, "成果");
     bool underPkg = full.StartsWith(pkgFull + "\\", System.StringComparison.OrdinalIgnoreCase);
-    bool underWs = full.StartsWith(parent + "\\", System.StringComparison.OrdinalIgnoreCase)
-      && (full.StartsWith(workAscii + "\\", System.StringComparison.OrdinalIgnoreCase)
-       || full.StartsWith(workLegacy + "\\", System.StringComparison.OrdinalIgnoreCase)
-       || full.IndexOf("\\工作区\\", System.StringComparison.OrdinalIgnoreCase) >= 0
-       || full.IndexOf("\\连接教练\\", System.StringComparison.OrdinalIgnoreCase) >= 0);
+    bool underWs = full.StartsWith(dataArt + "\\", System.StringComparison.OrdinalIgnoreCase)
+      || full.StartsWith(dataLegacy + "\\", System.StringComparison.OrdinalIgnoreCase)
+      || (full.StartsWith(parent + "\\", System.StringComparison.OrdinalIgnoreCase)
+        && (full.StartsWith(workAscii + "\\", System.StringComparison.OrdinalIgnoreCase)
+         || full.StartsWith(workLegacy + "\\", System.StringComparison.OrdinalIgnoreCase)
+         || full.IndexOf("\\工作区\\", System.StringComparison.OrdinalIgnoreCase) >= 0
+         || full.IndexOf("\\连接教练\\", System.StringComparison.OrdinalIgnoreCase) >= 0));
     if (underPkg || underWs) return "";
     return "foreign-bridge-refused";
   }
