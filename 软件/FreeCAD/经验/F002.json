@@ -1,0 +1,24 @@
+{
+    "api":  "fc box L= W= H= [at=x,y,z]；fc set obj= prop= value=",
+    "do":  "fc box L=100 W=50 H=30；改高：fc set obj=Box prop=Height value=60（Length/Width 同理）。",
+    "sw":  "FreeCAD",
+    "evidence":  "2026-11-11 前台实测：100×50×30 → 改高 60，包围盒 100×50×60，6 面，体积 300000",
+    "pit":  "obj 用回包里的对象名（Box、Box001…），不是标签；打孔/倒角后最终形状是新对象，但改尺寸仍改原 Box。",
+    "t":  "建方块再改尺寸：box 建 Part::Box，set 改 Height 等参数，不删重建",
+    "task":  "建模/改模",
+    "check":  "回包 实读.包围盒 = 100×50×60、面数 6、体积 300000",
+    "k":  [
+              "方块",
+              "长方体",
+              "块",
+              "box",
+              "改尺寸",
+              "改高度",
+              "修改",
+              "参数",
+              "set"
+          ],
+    "id":  "F002",
+    "v":  1,
+    "date":  "2026-11-11"
+}

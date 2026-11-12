@@ -1,0 +1,10 @@
+{"说明":"一行一条：id t(一句话) k(关键词) sw(软件) task(任务类型) v(1=验证过) u(用过次数) f(卡片文件)",
+"entries":[
+  {"id":"F001","t":"连 FreeCAD：跑 一键连接.ps1，见 RESULT: OK 就连上了","k":["连接","连上","启动","一键连接","connect","FreeCAD"],"sw":"FreeCAD","task":"连接","v":1,"u":0,"f":"F001.json"},
+  {"id":"F003","t":"打通孔：hole 圆柱求差，孔心 x,y，自动从底穿到顶","k":["孔","通孔","打孔","钻孔","hole","求差","圆柱"],"sw":"FreeCAD","task":"建模","v":1,"u":0,"f":"F003.json"},
+  {"id":"F004","t":"倒角/倒圆：chamfer/fillet 按几何选边 edges=top|bottom|vertical|outer|inner","k":["倒角","倒斜角","C角","chamfer","倒圆","圆角","fillet","选边"],"sw":"FreeCAD","task":"建模","v":1,"u":0,"f":"F004.json"},
+  {"id":"F005","t":"核对用 measure：一次读包围盒/体积/面数/内孔外圆直径/锥面/平面位置，可带期望值","k":["核对","测量","实读","读回","measure","尺寸","检查","验收"],"sw":"FreeCAD","task":"核对","v":1,"u":0,"f":"F005.json"},
+  {"id":"F002","t":"建方块再改尺寸：box 建 Part::Box，set 改 Height 等参数，不删重建","k":["方块","长方体","块","box","改尺寸","改高度","修改","参数","set"],"sw":"FreeCAD","task":"建模/改模","v":1,"u":1,"f":"F002.json"},
+  {"id": "F006", "t": "FreeCAD 界面中文：一键连接启动前把 user.cfg 的 General/Language 设成 Chinese (Simplified)，打开即中文", "k": ["中文", "汉化", "界面语言", "语言", "简体中文", "Language", "zh-CN", "locale", "user.cfg"], "sw": "FreeCAD", "task": "连接/设置", "v": 1, "u": 0, "f": "F006.json"},
+  {"id": "F007", "t": "垫片全剖图的 2-C0.1：指引线落在内孔棱上就是内孔上下两端各倒一处，带公差孔径按名义值建", "k": ["垫片", "垫圈", "washer", "倒角", "内孔倒角", "两端倒角", "2-C", "C0.1", "全剖"], "sw": "FreeCAD", "task": "工程图", "v": 1, "u": 0, "f": "F007.json"}
+]}

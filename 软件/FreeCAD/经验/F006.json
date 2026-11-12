@@ -1,0 +1,25 @@
+{
+ "id": "F006",
+ "t": "FreeCAD 界面中文：一键连接启动前把 user.cfg 的 General/Language 设成 Chinese (Simplified)，打开即中文",
+ "k": [
+  "中文",
+  "汉化",
+  "界面语言",
+  "语言",
+  "简体中文",
+  "Language",
+  "zh-CN",
+  "locale",
+  "user.cfg"
+ ],
+ "sw": "FreeCAD",
+ "task": "连接/设置",
+ "do": "直接跑 一键连接.ps1 就行，它在启动 FreeCAD 前写 运行数据\\FreeCAD用户\\user.cfg：Root/BaseApp/Preferences/General 下 FCText Language = Chinese (Simplified)。没有 user.cfg 就新建一份只含这一项；已有就只改这一项。要别的语言：启动前设环境变量 NGXZ_FC_LANG=English（或其他语言名）；不想动语言：NGXZ_FC_LANG=off。",
+ "pit": "① 配置在本包 运行数据\\FreeCAD用户\\（FREECAD_USER_HOME 指过去的），不是 %APPDATA%\\FreeCAD，改那边没用，也别去动本机原设置。② 必须在启动前写：FreeCAD 退出时会把内存里的设置写回 user.cfg，开着时改文件会被覆盖。③ 值是语言名 Chinese (Simplified)，不是 zh-CN；可用名单看 Gui.supportedLocales()。④ 开着的窗口要即时切：Gui.setLocale('zh-CN')（未测是否全部菜单即时刷新，稳妥是关掉再一键连接）。",
+ "api": "一键连接.ps1（Set-FcLanguage）；fc py code='result.update({\"locale\":Gui.getLocale(),\"menus\":[a.text() for a in Gui.getMainWindow().menuBar().actions()]})'",
+ "check": "fc py 读回 Gui.getLocale() = Chinese (Simplified)，菜单栏是 文件(&F) 编辑(&E) 视图(&V)…；截图看左侧树标题「模型」、底部「视图/数据」、标签「开始」。",
+ "evidence": "2026-11-11 FreeCAD 1.1.4 便携版：新 user.cfg 首次启动即中文（菜单 文件/编辑/视图/工具/宏/草图/零件设计/窗口/帮助，locale=Chinese (Simplified)），截图 自测_05_界面中文_FreeCAD窗口.png；把已有 user.cfg 改成 English 再一键连接，启动前被改回中文，读回菜单仍是中文。不需要重启。",
+ "v": 1,
+ "date": "2026-11-11",
+ "source": "做法搬自本仓库提交 ff12900 的 适配器/FreeCAD/启动.ps1（同一段 user.cfg Language 写法）"
+}

@@ -1,0 +1,21 @@
+{
+    "api":  "一键连接.ps1 / fc.ps1 wait / fc.ps1 status",
+    "do":  "powershell -NoProfile -ExecutionPolicy Bypass -File \u003c本包\u003e\\软件\\FreeCAD\\连接程序\\一键连接.ps1；已连上会沿用，不开第二个。",
+    "sw":  "FreeCAD",
+    "evidence":  "2026-11-11 FreeCAD 1.1.4 便携版，22 秒 RESULT: OK",
+    "pit":  "首次启动约 20 秒，wait 会等；找不到软件加 -FreeCAD \u003cFreeCAD.exe\u003e；用户配置在 运行数据\\FreeCAD用户，不动本机设置。",
+    "t":  "连 FreeCAD：跑 一键连接.ps1，见 RESULT: OK 就连上了",
+    "task":  "连接",
+    "check":  "fc.ps1 wait 打印 CONNECTED FreeCAD 1.1.4；YA 显示已连接",
+    "k":  [
+              "连接",
+              "连上",
+              "启动",
+              "一键连接",
+              "connect",
+              "FreeCAD"
+          ],
+    "id":  "F001",
+    "v":  1,
+    "date":  "2026-11-11"
+}

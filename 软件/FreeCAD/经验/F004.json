@@ -1,0 +1,23 @@
+{
+    "api":  "fc chamfer size= edges= [obj=]；fc fillet 同",
+    "do":  "fc chamfer size=2 edges=top；倒圆 fc fillet size=2 edges=vertical；可组合 edges=top+bottom，或给棱编号 edges=3,5。",
+    "sw":  "FreeCAD",
+    "evidence":  "2026-11-11 前台实测：顶面 5 条棱 C2，面数 7→12，体积 294627.068",
+    "pit":  "edges=top 会把顶面所有棱都选上（含孔口圆棱）；只要外圈用 outer/编号。",
+    "t":  "倒角/倒圆：chamfer/fillet 按几何选边 edges=top|bottom|vertical|outer|inner",
+    "task":  "建模",
+    "check":  "实读 锥面(倒角) 出现（孔口倒角）或面数增加；体积略减",
+    "k":  [
+              "倒角",
+              "倒斜角",
+              "C角",
+              "chamfer",
+              "倒圆",
+              "圆角",
+              "fillet",
+              "选边"
+          ],
+    "id":  "F004",
+    "v":  1,
+    "date":  "2026-11-11"
+}

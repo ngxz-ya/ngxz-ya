@@ -1,0 +1,27 @@
+{
+ "id": "G005",
+ "t": "Agent 命令里起 GUI 软件会被一起带走：用 WMI Win32_Process.Create 脱离启动",
+ "k": [
+  "脱离",
+  "被关",
+  "闪退",
+  "进程树",
+  "job",
+  "后台",
+  "WMI",
+  "Win32_Process",
+  "启动",
+  "窗口没了",
+  "detach"
+ ],
+ "sw": "通用",
+ "task": "连接",
+ "do": "连接脚本里启动软件、YA 一律用 Invoke-CimMethod Win32_Process Create（ShowWindow 控制显示）；需要环境变量就经 cmd /c set \"X=..\"&& start \"\" exe 传进去，WMI 起的进程不继承当前环境。",
+ "pit": "Start-Process / & / start 起的进程留在 Agent 命令的进程树/作业里，命令一结束或 Agent 收工，软件窗口被连带关掉，看着像闪退。不要自己写保活脚本放 Temp 里死等。",
+ "api": "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=$line;CurrentDirectory=$dir;ProcessStartupInformation=$st}",
+ "check": "命令结束后软件进程还在；它的父进程不是 Agent 的 shell（是 WmiPrvSE 或已退出的 cmd）。",
+ "evidence": "2026-11-11 A 轮 Grok 无头：Start-Process 起的 FreeCAD 在 一键连接 返回后被带走，Agent 自写保活脚本才撑住；改成 WMI 后自测命令返回后 FreeCAD 仍在（父进程已不是 shell）。在 Codex 下的效果见 B 轮。",
+ "v": 1,
+ "date": "2026-11-11",
+ "source": "做法与本仓库提交 9dd472d 的 适配器/启动软件.ps1、连接教练/快连.ps1 相同"
+}

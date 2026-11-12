@@ -1,1 +1,0 @@
-﻿{"schema":1,"adapters":[],"note":"本包不内置任何软件的连接实现。连接方法由 Agent 先上网搜索合法开源/官方方案（GitHub、MCP Registry、官方 API 文档），在用户工作区研究、审查、验证后保存为本机经验。"}
